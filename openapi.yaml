@@ -1,0 +1,124 @@
+openapi: 3.0.3
+info:
+  title: Practice Card Games Auth API
+  version: 0.1.0
+  description: |
+    基于 Telegram WebApp initData 的登录与会话管理接口。Phase 0 仅包含单一登录入口，未来阶段可按版本号扩展。
+servers:
+  - url: https://dev.api.practice-card.games
+    description: 开发环境
+  - url: https://staging.api.practice-card.games
+    description: 预发布环境
+  - url: https://api.practice-card.games
+    description: 生产环境
+paths:
+  /api/auth/telegram:
+    post:
+      summary: 使用 Telegram WebApp initData 登录
+      operationId: loginWithTelegram
+      tags:
+        - auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - initData
+              properties:
+                initData:
+                  type: string
+                  description: Telegram WebApp initData string（未经 decodeURIComponent）
+                device:
+                  type: object
+                  description: 客户端可选上报的设备信息
+                  properties:
+                    platform:
+                      type: string
+                      example: ios
+                    version:
+                      type: string
+                      example: "1.0.0"
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                        description: HS256 JWT 令牌
+                      expiresIn:
+                        type: integer
+                        description: 令牌有效期（秒）
+                      issuedAt:
+                        type: integer
+                        description: 令牌签发时间戳（秒）
+                      user:
+                        type: object
+                        nullable: true
+                        properties:
+                          id:
+                            type: integer
+                          firstName:
+                            type: string
+                          lastName:
+                            type: string
+                          username:
+                            type: string
+                          languageCode:
+                            type: string
+                          photoUrl:
+                            type: string
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 登录凭证无效或过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: AUTH_INVALID_SIGNATURE
+            message:
+              type: string
+              example: 登录状态已失效，请重新登录。
+            details:
+              type: object
+              nullable: true
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
