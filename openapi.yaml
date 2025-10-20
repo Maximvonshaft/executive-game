@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Practice Card Games Auth API
-  version: 0.1.0
+  title: Practice Card Games Realtime API
+  version: 0.2.0
   description: |
-    基于 Telegram WebApp initData 的登录与会话管理接口。Phase 0 仅包含单一登录入口，未来阶段可按版本号扩展。
+    覆盖 Telegram 登录、大厅列表、匹配、房间及五子棋对局的基础接口。
 servers:
   - url: https://dev.api.practice-card.games
     description: 开发环境
@@ -97,6 +97,211 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/games:
+    get:
+      summary: 获取大厅中的可玩游戏列表
+      operationId: listGames
+      tags:
+        - games
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 游戏列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      games:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Game'
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/match/start:
+    post:
+      summary: 发起实时匹配
+      operationId: startMatch
+      tags:
+        - matchmaking
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - gameId
+              properties:
+                gameId:
+                  type: string
+                  example: gomoku
+      responses:
+        '200':
+          description: 匹配请求已受理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/MatchTicket'
+        '400':
+          description: 参数错误或游戏不支持
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 已在匹配队列中
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/match/cancel:
+    post:
+      summary: 取消当前的匹配请求
+      operationId: cancelMatch
+      tags:
+        - matchmaking
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 取消成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      cancelled:
+                        type: boolean
+                        example: true
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 未在队列中
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/rooms:
+    get:
+      summary: 查询活跃房间
+      operationId: listRooms
+      tags:
+        - rooms
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 房间列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      rooms:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RoomSummary'
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/rooms/join:
+    post:
+      summary: 加入已有房间（重新连接或恢复）
+      operationId: joinRoom
+      tags:
+        - rooms
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - roomId
+              properties:
+                roomId:
+                  type: string
+      responses:
+        '200':
+          description: 房间状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      room:
+                        $ref: '#/components/schemas/RoomState'
+        '401':
+          description: 未授权
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 非房间成员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 房间不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ErrorResponse:
@@ -117,6 +322,176 @@ components:
             details:
               type: object
               nullable: true
+    Game:
+      type: object
+      properties:
+        id:
+          type: string
+          example: gomoku
+        name:
+          type: string
+          example: 五子棋
+        category:
+          type: string
+          example: board
+        minPlayers:
+          type: integer
+          example: 2
+        maxPlayers:
+          type: integer
+          example: 2
+        shortDescription:
+          type: string
+        meta:
+          type: object
+          properties:
+            boardSize:
+              type: integer
+              example: 15
+            openingRule:
+              type: string
+              example: freestyle
+            winningLength:
+              type: integer
+              example: 5
+    MatchTicket:
+      type: object
+      properties:
+        ticketId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [searching, matched]
+    RoomSeat:
+      type: object
+      properties:
+        playerId:
+          type: string
+        ready:
+          type: boolean
+        stone:
+          type: string
+          enum: [black, white]
+          nullable: true
+    RoomSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        gameId:
+          type: string
+        status:
+          type: string
+          enum: [waiting, in_progress, completed]
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        seats:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomSeat'
+        winner:
+          type: string
+          nullable: true
+    GomokuMove:
+      type: object
+      properties:
+        playerId:
+          type: string
+        stone:
+          type: string
+          enum: [black, white]
+        x:
+          type: integer
+        y:
+          type: integer
+        playedAt:
+          type: integer
+          format: int64
+    GomokuEngineState:
+      type: object
+      properties:
+        size:
+          type: integer
+        board:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+              nullable: true
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              stone:
+                type: string
+                enum: [black, white]
+              x:
+                type: integer
+              y:
+                type: integer
+        nextStone:
+          type: string
+          nullable: true
+        winner:
+          type: string
+          nullable: true
+        winningLine:
+          type: array
+          nullable: true
+          items:
+            type: object
+            properties:
+              x:
+                type: integer
+              y:
+                type: integer
+        finished:
+          type: boolean
+    RoomState:
+      type: object
+      properties:
+        id:
+          type: string
+        gameId:
+          type: string
+        status:
+          type: string
+          enum: [waiting, in_progress, completed]
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        sequence:
+          type: integer
+        players:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoomSeat'
+        nextPlayerId:
+          type: string
+          nullable: true
+        winner:
+          type: string
+          nullable: true
+        finishedAt:
+          type: integer
+          format: int64
+          nullable: true
+        engine:
+          $ref: '#/components/schemas/GomokuEngineState'
+        moves:
+          type: array
+          items:
+            $ref: '#/components/schemas/GomokuMove'
   securitySchemes:
     bearerAuth:
       type: http

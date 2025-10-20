@@ -3,6 +3,16 @@ const { URL } = require('url');
 const { config } = require('./config/env');
 const { ApplicationError, ERROR_CODES } = require('./errors/codes');
 const { authenticateWithTelegram } = require('./services/authService');
+const { verifyJwt } = require('./utils/jwt');
+const { GameService } = require('./services/gameService');
+const { MatchmakingService } = require('./services/matchmakingService');
+const { RoomService } = require('./services/roomService');
+const { WebSocketGateway } = require('./services/websocketGateway');
+
+const gameService = new GameService();
+const roomService = new RoomService({ gameService });
+const matchService = new MatchmakingService({ gameService });
+let gateway = null;
 
 function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -61,6 +71,33 @@ function handleError(error, res) {
   res.end(JSON.stringify(payload));
 }
 
+function sendJson(res, statusCode, payload) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(payload));
+}
+
+function requireAuth(req) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) {
+    throw new ApplicationError('AUTH_TOKEN_REQUIRED');
+  }
+  const token = header.slice('Bearer '.length).trim();
+  try {
+    const payload = verifyJwt(token, config.jwt.secret);
+    const playerId = payload.telegramUserId || payload.sub;
+    if (!playerId) {
+      throw new ApplicationError('AUTH_INVALID_TOKEN');
+    }
+    return { token, payload, playerId };
+  } catch (error) {
+    if (error instanceof ApplicationError) {
+      throw error;
+    }
+    throw new ApplicationError('AUTH_INVALID_TOKEN', { cause: error });
+  }
+}
+
 async function requestHandler(req, res) {
   setSecurityHeaders(res);
   const origin = req.headers.host ? `http://${req.headers.host}` : 'http://localhost';
@@ -94,6 +131,71 @@ async function requestHandler(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/games') {
+    try {
+      requireAuth(req);
+      const games = gameService.listGames();
+      sendJson(res, 200, { success: true, data: { games } });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/match/start') {
+    try {
+      const auth = requireAuth(req);
+      const body = await parseBody(req);
+      const gameId = typeof body.gameId === 'string' ? body.gameId : null;
+      if (!gameId) {
+        throw new ApplicationError('MATCH_UNSUPPORTED_GAME');
+      }
+      const ticket = matchService.startMatch(auth.playerId, gameId);
+      sendJson(res, 200, { success: true, data: ticket });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/match/cancel') {
+    try {
+      const auth = requireAuth(req);
+      const result = matchService.cancelMatch(auth.playerId);
+      sendJson(res, 200, { success: true, data: result });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/rooms') {
+    try {
+      requireAuth(req);
+      const rooms = roomService.listRooms();
+      sendJson(res, 200, { success: true, data: { rooms } });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/rooms/join') {
+    try {
+      const auth = requireAuth(req);
+      const body = await parseBody(req);
+      const roomId = typeof body.roomId === 'string' ? body.roomId : null;
+      if (!roomId) {
+        throw new ApplicationError('ROOM_NOT_FOUND');
+      }
+      const room = roomService.joinRoom(roomId, auth.playerId);
+      sendJson(res, 200, { success: true, data: { room } });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
   res.statusCode = 404;
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: '资源不存在' } }));
@@ -105,6 +207,9 @@ function startServer() {
       handleError(error, res);
     });
   });
+  if (!gateway) {
+    gateway = new WebSocketGateway({ server, matchService, roomService });
+  }
   server.listen(config.port, () => {
     process.stdout.write(`Server listening on port ${config.port} (env: ${config.env})\n`);
   });
@@ -116,5 +221,10 @@ if (require.main === module) {
 }
 
 module.exports = {
-  startServer
+  startServer,
+  services: {
+    gameService,
+    matchService,
+    roomService
+  }
 };
