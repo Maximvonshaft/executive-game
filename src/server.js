@@ -8,6 +8,8 @@ const { matchmaker } = require('./services/matchService');
 const { roomManager } = require('./services/roomService');
 const { authenticateHttpRequest } = require('./utils/auth');
 const { setupRealtime } = require('./realtime/gateway');
+const progression = require('./services/progression');
+progression.ensureListener();
 
 function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -113,6 +115,30 @@ async function requestHandler(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/leaderboard') {
+    try {
+      const scope = url.searchParams.get('scope') || 'overall';
+      const limitParam = url.searchParams.get('limit');
+      const limit = limitParam ? Number.parseInt(limitParam, 10) : undefined;
+      const leaderboard = progression.getLeaderboardView(scope, limit);
+      respondSuccess(res, { leaderboard });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && /^\/api\/profile\/[\w-]+$/.test(url.pathname)) {
+    try {
+      const [, , , playerId] = url.pathname.split('/');
+      const profile = progression.getProfile(playerId);
+      respondSuccess(res, { profile });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
   if (req.method === 'GET' && /^\/api\/games\/[\w-]+\/meta$/.test(url.pathname)) {
     try {
       const [, , , gameId, metaSegment] = url.pathname.split('/');
@@ -212,6 +238,39 @@ async function requestHandler(req, res) {
           throw createError('ROOM_NOT_MEMBER');
         }
         respondSuccess(res, { room: snapshot });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/tasks/today') {
+    try {
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const tasks = progression.getTodayTasks(playerId);
+        respondSuccess(res, { tasks });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && /^\/api\/tasks\/[\w-]+\/claim$/.test(url.pathname)) {
+    try {
+      const [, , , taskId, action] = url.pathname.split('/');
+      if (action !== 'claim') {
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: '资源不存在' } }));
+        return;
+      }
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const claim = progression.claimTaskReward(playerId, taskId);
+        respondSuccess(res, { claim });
       });
     } catch (error) {
       handleError(error, res);

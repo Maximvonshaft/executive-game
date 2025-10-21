@@ -7,6 +7,7 @@ const { config } = require('../../src/config/env');
 const { startServer } = require('../../src/server');
 const { matchmaker } = require('../../src/services/matchService');
 const { roomManager } = require('../../src/services/roomService');
+const progression = require('../../src/services/progression');
 
 function createToken(playerId) {
   return signJwt(
@@ -176,6 +177,7 @@ async function waitForType(client, type) {
 async function withServer(testFn) {
   matchmaker.reset();
   roomManager.reset();
+  progression.reset();
   const server = startServer();
   await once(server, 'listening');
   const address = server.address();
