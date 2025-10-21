@@ -8,6 +8,7 @@ const { startServer } = require('../../src/server');
 const { matchmaker } = require('../../src/services/matchService');
 const { roomManager } = require('../../src/services/roomService');
 const progression = require('../../src/services/progression');
+const social = require('../../src/services/socialService');
 
 function createToken(playerId) {
   return signJwt(
@@ -178,6 +179,7 @@ async function withServer(testFn) {
   matchmaker.reset();
   roomManager.reset();
   progression.reset();
+  social.reset();
   const server = startServer();
   await once(server, 'listening');
   const address = server.address();
@@ -189,7 +191,6 @@ async function withServer(testFn) {
       server.realtimeShutdown();
     }
     server.close();
-    await once(server, 'close');
   }
 }
 

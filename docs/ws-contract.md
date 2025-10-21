@@ -10,7 +10,8 @@
 ## 客户端 → 服务端
 | 事件 | 描述 | Payload |
 | --- | --- | --- |
-| `join_room` | 订阅房间事件流，并立即收到最新 `room_state` | `{ "roomId": string, "sinceSeq?": number }` |
+| `join_room` | 以玩家身份订阅房间事件流，并立即收到最新 `room_state` | `{ "roomId": string, "sinceSeq?": number }` |
+| `watch_room` | 以观战身份订阅房间，支持邀请码 | `{ "roomId?": string, "inviteCode?": string, "sinceSeq?": number }` |
 | `ready` | 准备完毕，等待开局 | `{ "roomId": string }` |
 | `play_action` | 发起游戏动作 | `{ "roomId": string, "action": object }`<br/>（兼容 Phase 1，可继续发送 `position` 字段，服务端会转换为 `{ action: { position } }`） |
 | `request_state` | 按序号补齐历史事件 | `{ "roomId": string, "sinceSeq": number }` |
@@ -19,13 +20,19 @@
 ## 服务端 → 客户端
 | 事件 | 描述 | Payload |
 | --- | --- | --- |
-| `room_state` | 房间全量状态（含棋盘、玩家、结果） | `{ "sequence": number, "state": RoomState }` |
+| `room_state` | 房间全量状态（含棋盘、玩家、观战配置与结果） | `{ "sequence": number, "state": RoomState, "role?": 'player' | 'spectator' }` |
 | `player_ready` | 某玩家完成准备 | `{ "sequence": number, "payload": { roomId, playerId } }` |
+| `player_joined` | 玩家加入或房主邀请成功 | `{ "sequence": number, "payload": { roomId, playerId, players[] } }` |
+| `player_removed` | 玩家离开或被房主移除 | `{ "sequence": number, "payload": { roomId, playerId, reason } }` |
 | `match_started` | 所有玩家准备完毕，进入对局 | `{ "sequence": number, "payload": { roomId, gameId, players[] } }`（`players[]` 由具体引擎决定，例如五子棋含 `stone`，斗地主含 `role`） |
 | `turn_started` | 轮到某玩家行动 | `{ "sequence": number, "payload": { roomId, playerId, seat?, stone?/role?/color? } }` |
 | `action_applied` | 动作成功并广播局面 | `{ "sequence": number, "payload": { roomId, playerId, seat?, action, stateDiff? } }`（五子棋继续返回 `board`/`moves`，斗地主会返回 `handCounts`、`lastAction` 等） |
 | `action_rejected` | 动作无效，包含原因 | `{ "sequence": number, "payload": { roomId, playerId, reason, action } }` |
 | `match_result` | 对局结束（胜负或平局） | `{ "sequence": number, "payload": { roomId, winnerId?, winnerIds?, winnerSeats?, reason, extra? } }` |
+| `match_aborted` | 对局因成员离场而中断 | `{ "sequence": number, "payload": { roomId, playerId?, reason } }` |
+| `spectator_joined` | 有观众加入 | `{ "sequence": number, "payload": { roomId, spectatorId, count } }` |
+| `spectator_left` | 观众离开或被移除 | `{ "sequence": number, "payload": { roomId, spectatorId, count } }` |
+| `room_settings_updated` | 房间观战/权限设置变更 | `{ "sequence": number, "payload": { roomId, allowSpectators, spectatorDelayMs, spectatorLimit } }` |
 | `pong` | 心跳应答 | `{ "timestamp": number }` |
 | `error` | 业务错误提示 | `{ "code": string }` |
 
@@ -35,6 +42,14 @@ interface RoomState {
   roomId: string;
   gameId: string;
   status: 'waiting' | 'active' | 'finished';
+  visibility: 'public' | 'private';
+  ownerId: string | null;
+  allowSpectators: boolean;
+  spectatorCount: number;
+  spectatorLimit: number;
+  spectatorDelayMs: number;
+  createdAt: number;
+  updatedAt: number;
   players: Array<Record<string, unknown>>; // 由各引擎返回，至少包含 id/seat/ready
   sequence: number;
   result: null | Record<string, unknown>;
@@ -44,6 +59,8 @@ interface RoomState {
   handCounts?: Array<{ seat: number; count: number }>;
   community?: Array<string>;
   nextTurnPlayerId: string | null;
+  role?: 'player' | 'spectator';
+  inviteCode?: string; // 仅房主可见
 }
 ```
 
@@ -64,6 +81,12 @@ interface RoomState {
 | `ROOM_NOT_MEMBER` | 非房间成员 |
 | `ROOM_ID_REQUIRED` | 缺少房间编号 |
 | `ROOM_NOT_ACTIVE` | 对局尚未开始 |
+| `ROOM_ALREADY_ACTIVE` | 对局已在进行中 |
+| `ROOM_INVITE_INVALID` | 邀请码无效 |
+| `ROOM_SPECTATORS_DISABLED` | 房间未开启观战 |
+| `ROOM_SPECTATORS_LIMIT` | 观战人数已达上限 |
+| `ROOM_SPECTATOR_FORBIDDEN` | 观战模式下禁止执行该操作 |
+| `ROOM_PLAYER_BLOCKED` | 被房主或成员屏蔽，无法加入 |
 | `ACTION_INVALID` | 动作 payload 不完整 |
 | `ACTION_OUT_OF_RANGE` / `ACTION_NOT_PLAYER_TURN` | 规则校验失败（坐标越界 / 未轮到当前玩家） |
 | `ACTION_CELL_OCCUPIED` | 五子棋落子点已被占用 |

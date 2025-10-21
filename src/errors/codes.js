@@ -74,6 +74,11 @@ const ERROR_CODES = {
     message: 'Player is not part of the room.',
     userMessage: '您无权访问该房间。'
   },
+  ROOM_NOT_OWNER: {
+    httpStatus: 403,
+    message: 'Only the room owner can perform this action.',
+    userMessage: '只有房主可以执行该操作。'
+  },
   ROOM_ID_REQUIRED: {
     httpStatus: 400,
     message: 'Room id is required.',
@@ -83,6 +88,46 @@ const ERROR_CODES = {
     httpStatus: 409,
     message: 'Room already finished.',
     userMessage: '对局已结束。'
+  },
+  ROOM_ALREADY_ACTIVE: {
+    httpStatus: 409,
+    message: 'Room is already in progress.',
+    userMessage: '对局正在进行中，无法加入。'
+  },
+  ROOM_INVITE_INVALID: {
+    httpStatus: 403,
+    message: 'Invite code is invalid or expired.',
+    userMessage: '邀请码无效或已过期。'
+  },
+  ROOM_FULL: {
+    httpStatus: 409,
+    message: 'Room is already full.',
+    userMessage: '房间人数已满，无法加入。'
+  },
+  ROOM_PLAYER_BLOCKED: {
+    httpStatus: 403,
+    message: 'Player is blocked by the room owner or participants.',
+    userMessage: '您已被房主或成员拉黑，无法加入房间。'
+  },
+  ROOM_SPECTATORS_DISABLED: {
+    httpStatus: 403,
+    message: 'Spectators are disabled for this room.',
+    userMessage: '该房间未开启观战功能。'
+  },
+  ROOM_SPECTATORS_LIMIT: {
+    httpStatus: 429,
+    message: 'Spectator limit reached for this room.',
+    userMessage: '观战人数已达上限，请稍后再试。'
+  },
+  ROOM_SPECTATOR_FORBIDDEN: {
+    httpStatus: 403,
+    message: 'Spectators cannot perform this action.',
+    userMessage: '观战模式下无法执行此操作。'
+  },
+  ROOM_ACTION_UNSUPPORTED: {
+    httpStatus: 400,
+    message: 'Requested room action is not supported.',
+    userMessage: '不支持的房间操作。'
   },
   CONFIG_MISSING_SECRET: {
     httpStatus: 500,
@@ -108,6 +153,16 @@ const ERROR_CODES = {
     httpStatus: 409,
     message: 'Task reward already claimed.',
     userMessage: '奖励已领取，请勿重复操作。'
+  },
+  FRIEND_SELF_FORBIDDEN: {
+    httpStatus: 400,
+    message: 'Cannot add yourself as a friend.',
+    userMessage: '无法添加自己为好友。'
+  },
+  FRIEND_TARGET_REQUIRED: {
+    httpStatus: 400,
+    message: 'Friend target is required.',
+    userMessage: '请指定要操作的玩家。'
   },
   SERVER_ERROR: {
     httpStatus: 500,

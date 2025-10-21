@@ -9,6 +9,7 @@ const { roomManager } = require('./services/roomService');
 const { authenticateHttpRequest } = require('./utils/auth');
 const { setupRealtime } = require('./realtime/gateway');
 const progression = require('./services/progression');
+const social = require('./services/socialService');
 progression.ensureListener();
 
 function setSecurityHeaders(res) {
@@ -87,6 +88,17 @@ function formatTicket(ticket) {
     createdAt: ticket.createdAt,
     matchedAt: ticket.matchedAt || null
   };
+}
+
+function decorateRoomSnapshot(snapshot, role, playerId) {
+  const view = { ...snapshot, role };
+  if (role === 'player' && snapshot.ownerId === playerId) {
+    const room = roomManager.getRoom(snapshot.roomId);
+    if (room && room.inviteCode) {
+      view.inviteCode = room.inviteCode;
+    }
+  }
+  return view;
 }
 
 async function handleAuthenticated(req, handler) {
@@ -210,12 +222,95 @@ async function requestHandler(req, res) {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/rooms') {
+    try {
+      const body = await parseBody(req);
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const action = typeof body.action === 'string' ? body.action : 'create';
+        if (action === 'create') {
+          const gameId = typeof body.gameId === 'string' ? body.gameId : 'gomoku';
+          if (!getGameById(gameId)) {
+            throw createError('MATCH_GAME_NOT_FOUND');
+          }
+          const allowSpectators = body.allowSpectators !== undefined ? Boolean(body.allowSpectators) : true;
+          const spectatorDelayMs = body.spectatorDelayMs !== undefined ? Number(body.spectatorDelayMs) : undefined;
+          const spectatorLimit = body.spectatorLimit !== undefined ? Number(body.spectatorLimit) : undefined;
+          const room = roomManager.createPrivateRoom({
+            gameId,
+            ownerId: playerId,
+            allowSpectators,
+            spectatorDelayMs,
+            spectatorLimit
+          });
+          const snapshot = decorateRoomSnapshot(roomManager.buildPublicState(room), 'player', playerId);
+          respondSuccess(res, { room: snapshot });
+          return;
+        }
+        if (action === 'kick') {
+          const roomId = typeof body.roomId === 'string' ? body.roomId : null;
+          const targetPlayerId = typeof body.targetPlayerId === 'string' ? body.targetPlayerId : null;
+          if (!roomId) {
+            throw createError('ROOM_ID_REQUIRED');
+          }
+          if (!targetPlayerId) {
+            throw createError('FRIEND_TARGET_REQUIRED');
+          }
+          const room = roomManager.kickPlayer({ roomId, operatorId: playerId, targetPlayerId });
+          const snapshot = decorateRoomSnapshot(roomManager.buildPublicState(room), 'player', playerId);
+          respondSuccess(res, { room: snapshot });
+          return;
+        }
+        if (action === 'leave') {
+          const roomId = typeof body.roomId === 'string' ? body.roomId : null;
+          if (!roomId) {
+            throw createError('ROOM_ID_REQUIRED');
+          }
+          roomManager.leaveRoom({ roomId, playerId });
+          const playing = roomManager
+            .listRoomsForPlayer(playerId)
+            .map((snapshot) => decorateRoomSnapshot(snapshot, 'player', playerId));
+          const spectating = roomManager
+            .listSpectatingRooms(playerId)
+            .map((snapshot) => decorateRoomSnapshot(snapshot, 'spectator', playerId));
+          respondSuccess(res, { rooms: playing, spectating });
+          return;
+        }
+        if (action === 'update') {
+          const roomId = typeof body.roomId === 'string' ? body.roomId : null;
+          if (!roomId) {
+            throw createError('ROOM_ID_REQUIRED');
+          }
+          const room = roomManager.updateRoomSettings({
+            roomId,
+            operatorId: playerId,
+            allowSpectators: body.allowSpectators,
+            spectatorDelayMs: body.spectatorDelayMs,
+            spectatorLimit: body.spectatorLimit
+          });
+          const snapshot = decorateRoomSnapshot(roomManager.buildPublicState(room), 'player', playerId);
+          respondSuccess(res, { room: snapshot });
+          return;
+        }
+        throw createError('ROOM_ACTION_UNSUPPORTED');
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/rooms') {
     try {
       await handleAuthenticated(req, ({ payload }) => {
         const playerId = payload.telegramUserId || payload.sub;
-        const rooms = roomManager.listRoomsForPlayer(playerId);
-        respondSuccess(res, { rooms });
+        const playing = roomManager
+          .listRoomsForPlayer(playerId)
+          .map((snapshot) => decorateRoomSnapshot(snapshot, 'player', playerId));
+        const spectating = roomManager
+          .listSpectatingRooms(playerId)
+          .map((snapshot) => decorateRoomSnapshot(snapshot, 'spectator', playerId));
+        respondSuccess(res, { rooms: playing, spectating });
       });
     } catch (error) {
       handleError(error, res);
@@ -228,16 +323,102 @@ async function requestHandler(req, res) {
       const body = await parseBody(req);
       await handleAuthenticated(req, ({ payload }) => {
         const playerId = payload.telegramUserId || payload.sub;
-        const roomId = typeof body.roomId === 'string' ? body.roomId : null;
-        if (!roomId) {
+        const requestedRoomId = typeof body.roomId === 'string' ? body.roomId : null;
+        const inviteCode = typeof body.inviteCode === 'string' ? body.inviteCode : null;
+        const asSpectator = body.asSpectator === true;
+        if (!requestedRoomId && !inviteCode) {
           throw createError('ROOM_ID_REQUIRED');
         }
-        const snapshot = roomManager.getRoomSnapshot(roomId);
-        const isMember = snapshot.players.some((player) => player.id === playerId);
-        if (!isMember) {
-          throw createError('ROOM_NOT_MEMBER');
+        let room = null;
+        if (requestedRoomId) {
+          room = roomManager.getRoom(requestedRoomId);
         }
-        respondSuccess(res, { room: snapshot });
+        if (!room && inviteCode) {
+          room = roomManager.findRoomByInvite(inviteCode);
+        }
+        if (!room) {
+          if (inviteCode && !requestedRoomId) {
+            throw createError('ROOM_INVITE_INVALID');
+          }
+          throw createError('ROOM_NOT_FOUND');
+        }
+        if (asSpectator) {
+          const result = roomManager.joinAsSpectator({ roomId: room.id, playerId, inviteCode });
+          const snapshot = decorateRoomSnapshot(roomManager.buildPublicState(result.room), 'spectator', playerId);
+          respondSuccess(res, { room: snapshot, role: 'spectator', spectator: { delayMs: result.delayMs } });
+          return;
+        }
+        const joinedRoom = roomManager.joinRoom({ roomId: room.id, inviteCode, playerId });
+        const snapshot = decorateRoomSnapshot(roomManager.buildPublicState(joinedRoom), 'player', playerId);
+        respondSuccess(res, { room: snapshot, role: 'player' });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/friends') {
+    try {
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const overview = social.getOverview(playerId);
+        respondSuccess(res, overview);
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/friends') {
+    try {
+      const body = await parseBody(req);
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const action = typeof body.action === 'string' ? body.action : 'add';
+        const targetId = typeof body.playerId === 'string' ? body.playerId : null;
+        function ensureTarget() {
+          if (!targetId) {
+            throw createError('FRIEND_TARGET_REQUIRED');
+          }
+        }
+        function mapResult(result) {
+          return result || {};
+        }
+        function wrap(fn) {
+          try {
+            return fn();
+          } catch (err) {
+            if (err && typeof err.code === 'string') {
+              throw createError(err.code);
+            }
+            throw err;
+          }
+        }
+        let result;
+        switch (action) {
+          case 'add':
+            ensureTarget();
+            result = wrap(() => social.addFriend(playerId, targetId));
+            break;
+          case 'remove':
+            ensureTarget();
+            result = social.removeFriend(playerId, targetId);
+            break;
+          case 'block':
+            ensureTarget();
+            result = social.blockPlayer(playerId, targetId);
+            break;
+          case 'unblock':
+            ensureTarget();
+            result = social.unblockPlayer(playerId, targetId);
+            break;
+          default:
+            throw createError('ROOM_ACTION_UNSUPPORTED');
+        }
+        const overview = social.getOverview(playerId);
+        respondSuccess(res, { result: mapResult(result), overview });
       });
     } catch (error) {
       handleError(error, res);
