@@ -34,6 +34,26 @@ const ERROR_CODES = {
     message: 'Authorization token is invalid.',
     userMessage: '会话已失效，请重新登录。'
   },
+  ADMIN_KEY_REQUIRED: {
+    httpStatus: 401,
+    message: 'Admin key is required.',
+    userMessage: '缺少管理操作凭证。'
+  },
+  ADMIN_KEY_INVALID: {
+    httpStatus: 403,
+    message: 'Admin key is invalid.',
+    userMessage: '管理操作未授权。'
+  },
+  ADMIN_PAYLOAD_INVALID: {
+    httpStatus: 400,
+    message: 'Admin payload is invalid.',
+    userMessage: '配置格式不正确，请检查后重试。'
+  },
+  ADMIN_PLAYER_REQUIRED: {
+    httpStatus: 400,
+    message: 'Target player is required for this admin action.',
+    userMessage: '请指定需要操作的玩家。'
+  },
   REQUEST_BODY_INVALID: {
     httpStatus: 400,
     message: 'Request body is not valid JSON.',
@@ -198,6 +218,21 @@ const ERROR_CODES = {
     httpStatus: 400,
     message: 'Friend target is required.',
     userMessage: '请指定要操作的玩家。'
+  },
+  PLAYER_BANNED: {
+    httpStatus: 403,
+    message: 'Player access has been revoked.',
+    userMessage: '账号已被限制，请联系客服处理。'
+  },
+  I18N_LANG_REQUIRED: {
+    httpStatus: 400,
+    message: 'Language parameter is required.',
+    userMessage: '缺少语言参数，请检查请求。'
+  },
+  I18N_PAYLOAD_INVALID: {
+    httpStatus: 400,
+    message: 'Translation payload is invalid.',
+    userMessage: '翻译数据格式不正确。'
   },
   SERVER_ERROR: {
     httpStatus: 500,

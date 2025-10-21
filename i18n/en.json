@@ -1,0 +1,31 @@
+{
+  "tasks": {
+    "daily_first_win": {
+      "title": "Daily First Win",
+      "description": "Win one ranked game to claim a bonus reward."
+    },
+    "daily_play_three": {
+      "title": "Warm Up Trio",
+      "description": "Finish three ranked matches to keep the momentum."
+    },
+    "daily_back_to_back": {
+      "title": "Back-to-Back",
+      "description": "Secure a two game win streak and keep it rolling."
+    }
+  },
+  "banners": {
+    "launch_week": {
+      "title": "Launch Week Rewards",
+      "body": "Clear daily missions to earn the limited avatar frame."
+    }
+  },
+  "announcements": {
+    "global": {
+      "message": "Welcome to Practice Card Games! Good luck and have fun."
+    }
+  },
+  "accessibility": {
+    "highContrastHint": "Enable high-contrast mode for sharper boards and cards.",
+    "dynamicTypeHint": "Typography scales with your system font settings automatically."
+  }
+}

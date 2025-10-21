@@ -4,6 +4,7 @@ const { authenticateToken } = require('../utils/auth');
 const { ApplicationError } = require('../errors/codes');
 const { roomManager } = require('../services/roomService');
 const observability = require('../services/observability');
+const adminConfig = require('../services/adminConfigService');
 
 function createMessage(type, payload) {
   return JSON.stringify({ type, ...payload });
@@ -345,6 +346,17 @@ function setupRealtime(server) {
       const playerId = extractPlayerId(payload);
       if (!playerId) {
         connection.sendText(createMessage('error', { code: 'AUTH_TOKEN_INVALID' }));
+        connection.close();
+        return;
+      }
+      const banEntry = adminConfig.getBanEntry(playerId);
+      if (banEntry) {
+        connection.sendText(
+          createMessage('error', {
+            code: 'PLAYER_BANNED',
+            meta: { reason: banEntry.reason, expiresAt: banEntry.expiresAt || null }
+          })
+        );
         connection.close();
         return;
       }

@@ -12,7 +12,13 @@ const progression = require('./services/progression');
 const social = require('./services/socialService');
 const aiTraining = require('./services/aiService');
 const audit = require('./services/auditService');
+const adminConfig = require('./services/adminConfigService');
+const i18n = require('./services/i18nService');
+const { authenticateAdminRequest } = require('./utils/adminAuth');
 progression.ensureListener();
+if (config.admin && typeof config.admin.fallbackLanguage === 'string') {
+  i18n.setFallbackLanguage(config.admin.fallbackLanguage);
+}
 
 function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -103,9 +109,49 @@ function decorateRoomSnapshot(snapshot, role, playerId) {
   return view;
 }
 
+function resolveLanguage(req, url) {
+  const queryLang = url.searchParams.get('lang');
+  if (queryLang && queryLang.trim()) {
+    return queryLang.trim();
+  }
+  const header = req.headers['accept-language'];
+  if (typeof header === 'string' && header.trim()) {
+    const [first] = header.split(',');
+    if (first && first.trim()) {
+      return first.trim();
+    }
+  }
+  return null;
+}
+
+function executeAdminAction(action) {
+  try {
+    return action();
+  } catch (error) {
+    if (error && typeof error.code === 'string') {
+      throw createError(error.code, { meta: error.meta });
+    }
+    throw error;
+  }
+}
+
 async function handleAuthenticated(req, handler) {
   const session = authenticateHttpRequest(req);
+  const playerId = session.payload.telegramUserId || session.payload.sub;
+  if (playerId) {
+    const banEntry = adminConfig.getBanEntry(playerId);
+    if (banEntry) {
+      throw createError('PLAYER_BANNED', {
+        meta: { reason: banEntry.reason, expiresAt: banEntry.expiresAt || null }
+      });
+    }
+  }
   return handler(session);
+}
+
+async function handleAdmin(req, handler) {
+  authenticateAdminRequest(req);
+  return handler();
 }
 
 async function requestHandler(req, res) {
@@ -121,6 +167,53 @@ async function requestHandler(req, res) {
 
   if (req.method === 'GET' && url.pathname === '/healthz') {
     respondSuccess(res, { status: 'ok', env: config.env });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/i18n') {
+    try {
+      const langParam = url.searchParams.get('lang') || '';
+      const requested = langParam
+        .split(',')
+        .map((lang) => lang.trim())
+        .filter((lang) => lang);
+      const languages = requested.length > 0 ? Array.from(new Set(requested)) : [i18n.getFallbackLanguage()];
+      const bundle = {};
+      languages.forEach((lang) => {
+        bundle[lang] = i18n.getLanguageBundle(lang);
+      });
+      respondSuccess(res, {
+        version: i18n.getVersion(),
+        fallbackLanguage: i18n.getFallbackLanguage(),
+        availableLanguages: i18n.getAvailableLanguages(),
+        supportedLanguages: config.admin?.supportedLanguages || [],
+        resources: bundle
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/accessibility') {
+    const accessibility = adminConfig.getAccessibilitySettings();
+    respondSuccess(res, { accessibility });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/banners') {
+    const lang = resolveLanguage(req, url);
+    const bannerSnapshot = adminConfig.getBanners();
+    const banners = adminConfig.getActiveBanners(Date.now(), { lang });
+    respondSuccess(res, { version: bannerSnapshot.version, banners });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/announcement') {
+    const lang = resolveLanguage(req, url);
+    const announcementSnapshot = adminConfig.getAnnouncement();
+    const announcement = adminConfig.getActiveAnnouncement(Date.now(), { lang });
+    respondSuccess(res, { version: announcementSnapshot.version, announcement });
     return;
   }
 
@@ -474,7 +567,8 @@ async function requestHandler(req, res) {
     try {
       await handleAuthenticated(req, ({ payload }) => {
         const playerId = payload.telegramUserId || payload.sub;
-        const tasks = progression.getTodayTasks(playerId);
+        const lang = resolveLanguage(req, url);
+        const tasks = progression.getTodayTasks(playerId, { lang });
         respondSuccess(res, { tasks });
       });
     } catch (error) {
@@ -496,6 +590,195 @@ async function requestHandler(req, res) {
         const playerId = payload.telegramUserId || payload.sub;
         const claim = progression.claimTaskReward(playerId, taskId);
         respondSuccess(res, { claim });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/tasks') {
+    try {
+      await handleAdmin(req, () => {
+        respondSuccess(res, { tasks: adminConfig.getTaskConfig() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/tasks') {
+    try {
+      const body = await parseBody(req);
+      await handleAdmin(req, () => {
+        if (!Array.isArray(body.definitions)) {
+          throw createError('ADMIN_PAYLOAD_INVALID', { meta: { reason: 'TASK_DEFINITION_REQUIRED' } });
+        }
+        executeAdminAction(() => adminConfig.setTaskDefinitions(body.definitions));
+        respondSuccess(res, { tasks: adminConfig.getTaskConfig() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/banners') {
+    try {
+      await handleAdmin(req, () => {
+        respondSuccess(res, { banners: adminConfig.getBanners() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/banners') {
+    try {
+      const body = await parseBody(req);
+      await handleAdmin(req, () => {
+        if (!Array.isArray(body.banners)) {
+          throw createError('ADMIN_PAYLOAD_INVALID', { meta: { reason: 'BANNER_LIST_REQUIRED' } });
+        }
+        executeAdminAction(() => adminConfig.setBanners(body.banners));
+        respondSuccess(res, { banners: adminConfig.getBanners() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/announcement') {
+    try {
+      await handleAdmin(req, () => {
+        respondSuccess(res, { announcement: adminConfig.getAnnouncement() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/announcement') {
+    try {
+      const body = await parseBody(req);
+      await handleAdmin(req, () => {
+        executeAdminAction(() => adminConfig.updateAnnouncement(body));
+        respondSuccess(res, { announcement: adminConfig.getAnnouncement() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/accessibility') {
+    try {
+      await handleAdmin(req, () => {
+        respondSuccess(res, { accessibility: adminConfig.getAccessibilitySettings() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/accessibility') {
+    try {
+      const body = await parseBody(req);
+      await handleAdmin(req, () => {
+        executeAdminAction(() => adminConfig.updateAccessibilitySettings(body));
+        respondSuccess(res, { accessibility: adminConfig.getAccessibilitySettings() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/bans') {
+    try {
+      await handleAdmin(req, () => {
+        respondSuccess(res, { banned: adminConfig.listBannedPlayers() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/bans') {
+    try {
+      const body = await parseBody(req);
+      await handleAdmin(req, () => {
+        const action = typeof body.action === 'string' ? body.action.trim() : 'ban';
+        const playerId = typeof body.playerId === 'string' ? body.playerId.trim() : '';
+        if (!playerId) {
+          throw createError('ADMIN_PLAYER_REQUIRED');
+        }
+        let result;
+        if (action === 'unban') {
+          executeAdminAction(() => adminConfig.unbanPlayer(playerId));
+          result = { playerId, status: 'unbanned' };
+        } else {
+          result = executeAdminAction(() =>
+            adminConfig.banPlayer(playerId, { reason: body.reason, expiresAt: body.expiresAt })
+          );
+          result.status = 'banned';
+        }
+        respondSuccess(res, { result, banned: adminConfig.listBannedPlayers() });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/i18n') {
+    try {
+      await handleAdmin(req, () => {
+        const lang = url.searchParams.get('lang');
+        if (lang && lang.trim()) {
+          const trimmed = lang.trim();
+          respondSuccess(res, {
+            version: i18n.getVersion(),
+            language: trimmed,
+            resources: i18n.getLanguageBundle(trimmed)
+          });
+          return;
+        }
+        respondSuccess(res, {
+          version: i18n.getVersion(),
+          languages: i18n.getAvailableLanguages()
+        });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/i18n') {
+    try {
+      const body = await parseBody(req);
+      await handleAdmin(req, () => {
+        const lang = typeof body.lang === 'string' ? body.lang.trim() : '';
+        if (!lang) {
+          throw createError('I18N_LANG_REQUIRED');
+        }
+        const resources = body.resources && typeof body.resources === 'object' ? body.resources : null;
+        if (!resources) {
+          throw createError('I18N_PAYLOAD_INVALID');
+        }
+        executeAdminAction(() => i18n.updateResources(lang, resources));
+        respondSuccess(res, {
+          version: i18n.getVersion(),
+          language: lang,
+          resources: i18n.getLanguageBundle(lang)
+        });
       });
     } catch (error) {
       handleError(error, res);
