@@ -1,5 +1,6 @@
 const { roomManager } = require('../roomService');
 const { createError } = require('../../errors/codes');
+const social = require('../socialService');
 const {
   ensureProfile,
   processMatchResult,
@@ -79,6 +80,7 @@ function handleMatchResult(room) {
       timestamp
     });
   });
+  social.recordMatch(room, timestamp);
 }
 
 function ensureListener() {

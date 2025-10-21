@@ -17,28 +17,102 @@ function setupRealtime(server) {
   const roomSubscribers = new Map();
   const activeConnections = new Set();
 
-  function subscribe(roomId, context) {
+  function subscribe(roomId, context, options = {}) {
     let subscribers = roomSubscribers.get(roomId);
     if (!subscribers) {
       subscribers = new Set();
       roomSubscribers.set(roomId, subscribers);
     }
     subscribers.add(context);
-    context.rooms.add(roomId);
+    const existing = context.subscriptions.get(roomId);
+    if (existing && existing.timer) {
+      clearTimeout(existing.timer);
+    }
+    const isSpectator = Boolean(options.spectator);
+    const rawDelay = Number(options.delayMs);
+    const delayMs = isSpectator && Number.isFinite(rawDelay) && rawDelay > 0 ? rawDelay : 0;
+    context.subscriptions.set(roomId, {
+      spectator: isSpectator,
+      delayMs,
+      lastSentAt: 0,
+      timer: null,
+      buffered: null
+    });
   }
 
-  function unsubscribeAll(context) {
-    context.rooms.forEach((roomId) => {
-      const subscribers = roomSubscribers.get(roomId);
-      if (!subscribers) {
-        return;
-      }
+  function unsubscribeRoom(context, roomId, options = {}) {
+    const subscription = context.subscriptions.get(roomId);
+    if (!subscription) {
+      return;
+    }
+    const subscribers = roomSubscribers.get(roomId);
+    if (subscribers) {
       subscribers.delete(context);
       if (subscribers.size === 0) {
         roomSubscribers.delete(roomId);
       }
+    }
+    if (subscription.timer) {
+      clearTimeout(subscription.timer);
+    }
+    if (subscription.spectator && !options.skipManager) {
+      try {
+        roomManager.removeSpectator({ roomId, spectatorId: context.playerId });
+      } catch (error) {
+        // ignore removal errors
+      }
+    }
+    context.subscriptions.delete(roomId);
+  }
+
+  function unsubscribeAll(context) {
+    Array.from(context.subscriptions.keys()).forEach((roomId) => {
+      unsubscribeRoom(context, roomId);
     });
-    context.rooms.clear();
+  }
+
+  function scheduleSpectatorMessage(context, roomId, subscription, message) {
+    const now = Date.now();
+    const delayMs = subscription.delayMs || 0;
+    if (delayMs <= 0 || !subscription.spectator) {
+      context.connection.sendText(message);
+      subscription.lastSentAt = now;
+      return;
+    }
+    if (!subscription.lastSentAt || now - subscription.lastSentAt >= delayMs) {
+      context.connection.sendText(message);
+      subscription.lastSentAt = now;
+      return;
+    }
+    subscription.buffered = message;
+    if (!subscription.timer) {
+      const remaining = Math.max(0, delayMs - (now - subscription.lastSentAt));
+      subscription.timer = setTimeout(() => {
+        subscription.timer = null;
+        if (subscription.buffered) {
+          const buffered = subscription.buffered;
+          subscription.buffered = null;
+          try {
+            context.connection.sendText(buffered);
+            subscription.lastSentAt = Date.now();
+          } catch (error) {
+            // ignore send errors for buffered messages
+          }
+        }
+      }, remaining);
+    }
+  }
+
+  function sendMessageToContext(context, roomId, message) {
+    const subscription = context.subscriptions.get(roomId);
+    if (!subscription || !subscription.spectator) {
+      context.connection.sendText(message);
+      if (subscription) {
+        subscription.lastSentAt = Date.now();
+      }
+      return;
+    }
+    scheduleSpectatorMessage(context, roomId, subscription, message);
   }
 
   function handleJoinRoom(context, message) {
@@ -54,12 +128,57 @@ function setupRealtime(server) {
         context.connection.sendText(createMessage('error', { code: 'ROOM_NOT_MEMBER' }));
         return;
       }
-      subscribe(roomId, context);
-      context.connection.sendText(createMessage('room_state', { sequence: snapshot.sequence, state: snapshot }));
+      unsubscribeRoom(context, roomId);
+      subscribe(roomId, context, { spectator: false });
+      context.connection.sendText(createMessage('room_state', { sequence: snapshot.sequence, state: snapshot, role: 'player' }));
       if (Number.isInteger(sinceSeq) && sinceSeq < snapshot.sequence) {
         const events = roomManager.getEventsSince(roomId, sinceSeq);
         events.forEach((event) => {
-          context.connection.sendText(createMessage(event.type, { sequence: event.sequence, payload: event.payload }));
+          const messagePayload = createMessage(event.type, { sequence: event.sequence, payload: event.payload });
+          sendMessageToContext(context, roomId, messagePayload);
+        });
+      }
+    } catch (error) {
+      if (error instanceof ApplicationError) {
+        context.connection.sendText(createMessage('error', { code: error.code }));
+      } else {
+        context.connection.sendText(createMessage('error', { code: 'SERVER_ERROR' }));
+      }
+    }
+  }
+
+  function handleWatchRoom(context, message) {
+    const { roomId, inviteCode, sinceSeq } = message;
+    if (!roomId && !inviteCode) {
+      context.connection.sendText(createMessage('error', { code: 'ROOM_ID_REQUIRED' }));
+      return;
+    }
+    try {
+      let room = null;
+      if (roomId) {
+        room = roomManager.getRoom(roomId);
+      }
+      if (!room && inviteCode) {
+        room = roomManager.findRoomByInvite(inviteCode);
+      }
+      if (!room) {
+        if (inviteCode && !roomId) {
+          context.connection.sendText(createMessage('error', { code: 'ROOM_INVITE_INVALID' }));
+        } else {
+          context.connection.sendText(createMessage('error', { code: 'ROOM_NOT_FOUND' }));
+        }
+        return;
+      }
+      const result = roomManager.joinAsSpectator({ roomId: room.id, playerId: context.playerId, inviteCode });
+      unsubscribeRoom(context, room.id);
+      subscribe(room.id, context, { spectator: true, delayMs: result.delayMs });
+      const snapshot = roomManager.buildPublicState(result.room);
+      context.connection.sendText(createMessage('room_state', { sequence: snapshot.sequence, state: snapshot, role: 'spectator' }));
+      if (Number.isInteger(sinceSeq) && sinceSeq < snapshot.sequence) {
+        const events = roomManager.getEventsSince(room.id, sinceSeq);
+        events.forEach((event) => {
+          const messagePayload = createMessage(event.type, { sequence: event.sequence, payload: event.payload });
+          sendMessageToContext(context, room.id, messagePayload);
         });
       }
     } catch (error) {
@@ -78,6 +197,11 @@ function setupRealtime(server) {
       return;
     }
     try {
+      const subscription = context.subscriptions.get(roomId);
+      if (!subscription || subscription.spectator) {
+        context.connection.sendText(createMessage('error', { code: 'ROOM_SPECTATOR_FORBIDDEN' }));
+        return;
+      }
       roomManager.setPlayerReady({ roomId, playerId: context.playerId });
     } catch (error) {
       if (error instanceof ApplicationError) {
@@ -103,6 +227,11 @@ function setupRealtime(server) {
       return;
     }
     try {
+      const subscription = context.subscriptions.get(roomId);
+      if (!subscription || subscription.spectator) {
+        context.connection.sendText(createMessage('error', { code: 'ROOM_SPECTATOR_FORBIDDEN' }));
+        return;
+      }
       roomManager.applyPlayerAction({ roomId, playerId: context.playerId, action });
     } catch (error) {
       if (error instanceof ApplicationError) {
@@ -122,7 +251,8 @@ function setupRealtime(server) {
     try {
       const events = roomManager.getEventsSince(roomId, sinceSeq);
       events.forEach((event) => {
-        context.connection.sendText(createMessage(event.type, { sequence: event.sequence, payload: event.payload }));
+        const messagePayload = createMessage(event.type, { sequence: event.sequence, payload: event.payload });
+        sendMessageToContext(context, roomId, messagePayload);
       });
     } catch (error) {
       if (error instanceof ApplicationError) {
@@ -144,6 +274,9 @@ function setupRealtime(server) {
     switch (message.type) {
       case 'join_room':
         handleJoinRoom(context, message);
+        break;
+      case 'watch_room':
+        handleWatchRoom(context, message);
         break;
       case 'ready':
         handleReady(context, message);
@@ -195,7 +328,7 @@ function setupRealtime(server) {
         connection,
         playerId,
         payload,
-        rooms: new Set()
+        subscriptions: new Map()
       };
       connections.set(connection, context);
       activeConnections.add(connection);
@@ -217,7 +350,20 @@ function setupRealtime(server) {
     }
     const message = createMessage(event.type, { sequence: event.sequence, payload: event.payload });
     subscribers.forEach((context) => {
-      context.connection.sendText(message);
+      const subscription = context.subscriptions.get(roomId);
+      if (!subscription) {
+        return;
+      }
+      if (event.type === 'spectator_left' && event.payload && event.payload.spectatorId === context.playerId) {
+        try {
+          context.connection.sendText(message);
+        } catch (error) {
+          // ignore send error on forced leave
+        }
+        unsubscribeRoom(context, roomId, { skipManager: true });
+        return;
+      }
+      sendMessageToContext(context, roomId, message);
     });
   };
 

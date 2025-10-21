@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Practice Card Games Realtime API
-  version: 0.4.0
+  version: 0.5.0
   description: |
-    Phase 3 在实时对战与多玩法的基础上，补齐段位评分、排行榜、任务系统与玩家资料卡。
+    Phase 4 在排行榜与任务体系之上，引入私密房、观战与好友/屏蔽能力，强化社交体验。
 servers:
   - url: https://dev.api.practice-card.games
     description: 开发环境
@@ -325,7 +325,7 @@ paths:
         - bearerAuth: []
       responses:
         '200':
-          description: 房间列表
+          description: 返回玩家参与与观战的房间列表
           content:
             application/json:
               schema:
@@ -340,8 +340,93 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/RoomState'
+                      spectating:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RoomState'
         '401':
           description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 管理私密房（创建/配置/离开/踢人）
+      operationId: mutateRoom
+      tags:
+        - rooms
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum:
+                    - create
+                    - kick
+                    - leave
+                    - update
+                  default: create
+                gameId:
+                  type: string
+                  description: 创建房间时的游戏 ID
+                roomId:
+                  type: string
+                  description: 目标房间 ID
+                targetPlayerId:
+                  type: string
+                  description: 踢人操作的目标玩家 ID
+                allowSpectators:
+                  type: boolean
+                  description: 是否允许观战
+                spectatorDelayMs:
+                  type: integer
+                  description: 观战事件延迟毫秒数
+                spectatorLimit:
+                  type: integer
+                  description: 最大观战人数
+      responses:
+        '200':
+          description: 返回房间或更新后的房间列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      room:
+                        $ref: '#/components/schemas/RoomState'
+                      rooms:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RoomState'
+                      spectating:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RoomState'
+        '400':
+          description: 请求体不合法
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 操作权限不足
           content:
             application/json:
               schema:
@@ -360,11 +445,19 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - roomId
               properties:
                 roomId:
                   type: string
+                  description: 房间 ID
+                inviteCode:
+                  type: string
+                  description: 私密房邀请码（可替代 roomId）
+                sinceSeq:
+                  type: integer
+                  description: 需要补齐的事件序号
+                asSpectator:
+                  type: boolean
+                  description: 是否以观战身份加入
       responses:
         '200':
           description: 返回房间状态
@@ -380,6 +473,17 @@ paths:
                     properties:
                       room:
                         $ref: '#/components/schemas/RoomState'
+                      role:
+                        type: string
+                        enum:
+                          - player
+                          - spectator
+                      spectator:
+                        type: object
+                        nullable: true
+                        properties:
+                          delayMs:
+                            type: integer
         '401':
           description: 未登录
           content:
@@ -394,6 +498,119 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: 房间不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/friends:
+    get:
+      summary: 查询好友、屏蔽与最近对手
+      operationId: listFriends
+      tags:
+        - social
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 返回社交关系
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      friends:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FriendEntry'
+                      blocked:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FriendEntry'
+                      recentOpponents:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RecentOpponent'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 更新好友或屏蔽关系
+      operationId: updateFriends
+      tags:
+        - social
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum:
+                    - add
+                    - remove
+                    - block
+                    - unblock
+                  default: add
+                playerId:
+                  type: string
+                  description: 目标玩家 ID
+      responses:
+        '200':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      result:
+                        type: object
+                        additionalProperties: true
+                      overview:
+                        type: object
+                        properties:
+                          friends:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/FriendEntry'
+                          blocked:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/FriendEntry'
+                          recentOpponents:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/RecentOpponent'
+        '400':
+          description: 请求体不合法
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 操作被拒绝
           content:
             application/json:
               schema:
@@ -632,6 +849,28 @@ components:
             - waiting
             - active
             - finished
+        visibility:
+          type: string
+          enum:
+            - public
+            - private
+        ownerId:
+          type: string
+          nullable: true
+        allowSpectators:
+          type: boolean
+        spectatorCount:
+          type: integer
+        spectatorLimit:
+          type: integer
+        spectatorDelayMs:
+          type: integer
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
         players:
           type: array
           items:
@@ -650,6 +889,9 @@ components:
                 type: boolean
         sequence:
           type: integer
+        state:
+          type: object
+          additionalProperties: true
         board:
           type: array
           nullable: true
@@ -694,6 +936,34 @@ components:
         nextTurnPlayerId:
           type: string
           nullable: true
+        role:
+          type: string
+          nullable: true
+          enum:
+            - player
+            - spectator
+        inviteCode:
+          type: string
+          nullable: true
+          description: 仅房主可见的私密房邀请码
+    FriendEntry:
+      type: object
+      properties:
+        playerId:
+          type: string
+    RecentOpponent:
+      type: object
+      properties:
+        playerId:
+          type: string
+        gameId:
+          type: string
+        roomId:
+          type: string
+          nullable: true
+        lastPlayedAt:
+          type: integer
+          format: int64
     Leaderboard:
       type: object
       properties:

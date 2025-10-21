@@ -3,15 +3,120 @@ const { EventEmitter } = require('events');
 const { createError } = require('../errors/codes');
 const { getGameById } = require('./gameService');
 const { getEngineAdapter } = require('../engines/registry');
+const social = require('./socialService');
+
+const INVITE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const DEFAULT_SPECTATOR_DELAY_MS = 1500;
+const DEFAULT_SPECTATOR_LIMIT = 16;
+
+function normaliseInviteCode(code) {
+  if (typeof code !== 'string') {
+    return null;
+  }
+  const trimmed = code.trim().toUpperCase();
+  return trimmed.length >= 4 ? trimmed : null;
+}
+
+function generateInviteCode() {
+  const length = 6;
+  let code = '';
+  for (let i = 0; i < length; i += 1) {
+    const index = Math.floor(Math.random() * INVITE_CHARSET.length);
+    code += INVITE_CHARSET[index];
+  }
+  return code;
+}
+
+function coerceNumber(value) {
+  if (typeof value === 'string' && value.trim() !== '') {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : NaN;
+  }
+  if (Number.isFinite(value)) {
+    return value;
+  }
+  return NaN;
+}
+
+function parseSpectatorDelay(value) {
+  const coerced = coerceNumber(value);
+  if (Number.isNaN(coerced)) {
+    return DEFAULT_SPECTATOR_DELAY_MS;
+  }
+  const delay = Math.max(0, Math.floor(coerced));
+  return Number.isFinite(delay) ? delay : DEFAULT_SPECTATOR_DELAY_MS;
+}
+
+function parseSpectatorLimit(value) {
+  const coerced = coerceNumber(value);
+  if (Number.isNaN(coerced)) {
+    return DEFAULT_SPECTATOR_LIMIT;
+  }
+  const limit = Math.max(0, Math.floor(coerced));
+  return Number.isFinite(limit) ? limit : DEFAULT_SPECTATOR_LIMIT;
+}
+
+function rebuildPlayers({ engine, gameId, playerIds, previousPlayers = [], timestamp = Date.now() }) {
+  if (!engine || typeof engine.assignSeats !== 'function') {
+    throw new Error('ENGINE_SEAT_ASSIGNMENT_MISSING');
+  }
+  const seatAssignments = engine.assignSeats({ gameId, playerIds });
+  if (!Array.isArray(seatAssignments) || seatAssignments.length !== playerIds.length) {
+    throw new Error('ENGINE_SEAT_ASSIGNMENT_INVALID');
+  }
+  const previousMap = new Map(previousPlayers.map((player) => [player.id, player]));
+  return seatAssignments.map((assignment, index) => {
+    const playerId = playerIds[index];
+    const existing = previousMap.get(playerId) || {};
+    if (!assignment || typeof assignment !== 'object') {
+      throw new Error('ENGINE_SEAT_DESCRIPTOR_INVALID');
+    }
+    const seat = Number.isInteger(assignment.seat) ? assignment.seat : index;
+    const attributes = assignment.attributes ? { ...assignment.attributes } : {};
+    const base = {
+      id: playerId,
+      seat,
+      ready: false,
+      lastSeenAt: timestamp,
+      attributes
+    };
+    Object.keys(assignment).forEach((key) => {
+      if (key === 'seat' || key === 'attributes') {
+        return;
+      }
+      base[key] = assignment[key];
+    });
+    Object.keys(existing).forEach((key) => {
+      if (key === 'ready' || key === 'lastSeenAt' || key === 'seat') {
+        return;
+      }
+      if (!Object.prototype.hasOwnProperty.call(base, key)) {
+        base[key] = existing[key];
+      }
+    });
+    return base;
+  });
+}
 
 class RoomManager extends EventEmitter {
   constructor() {
     super();
     this.rooms = new Map();
     this.playerRoom = new Map();
+    this.inviteToRoom = new Map();
+    this.spectatorRooms = new Map();
   }
 
-  createRoom({ gameId, playerIds }) {
+  createRoom({
+    gameId,
+    playerIds,
+    visibility = 'public',
+    ownerId = null,
+    allowSpectators = true,
+    spectatorDelayMs,
+    spectatorLimit,
+    inviteCode = null
+  }) {
     const game = getGameById(gameId);
     if (!game) {
       throw createError('MATCH_GAME_NOT_FOUND');
@@ -20,32 +125,13 @@ class RoomManager extends EventEmitter {
     if (!engine) {
       throw createError('MATCH_GAME_NOT_FOUND');
     }
-    const seatAssignments = engine.assignSeats({ gameId, playerIds });
-    if (!Array.isArray(seatAssignments) || seatAssignments.length !== playerIds.length) {
-      throw new Error('ENGINE_SEAT_ASSIGNMENT_INVALID');
+    const uniquePlayers = Array.from(new Set((playerIds || []).filter((id) => typeof id === 'string' && id.trim() !== '')));
+    if (uniquePlayers.length === 0) {
+      throw new Error('ROOM_REQUIRES_PLAYER');
     }
     const id = randomUUID();
     const now = Date.now();
-    const players = seatAssignments.map((assignment, index) => {
-      if (!assignment || typeof assignment !== 'object') {
-        throw new Error('ENGINE_SEAT_DESCRIPTOR_INVALID');
-      }
-      const seat = Number.isInteger(assignment.seat) ? assignment.seat : index;
-      const base = {
-        id: playerIds[index],
-        seat,
-        ready: false,
-        lastSeenAt: now,
-        attributes: assignment.attributes ? { ...assignment.attributes } : {}
-      };
-      Object.keys(assignment).forEach((key) => {
-        if (key === 'seat' || key === 'attributes') {
-          return;
-        }
-        base[key] = assignment[key];
-      });
-      return base;
-    });
+    const players = rebuildPlayers({ engine, gameId, playerIds: uniquePlayers, timestamp: now });
     const room = {
       id,
       gameId,
@@ -57,21 +143,105 @@ class RoomManager extends EventEmitter {
       sequence: 0,
       engineState: null,
       result: null,
-      engine
+      engine,
+      visibility,
+      ownerId,
+      allowSpectators: Boolean(allowSpectators),
+      spectatorDelayMs: parseSpectatorDelay(spectatorDelayMs),
+      spectatorLimit: parseSpectatorLimit(spectatorLimit),
+      spectators: new Map(),
+      minPlayers: Math.max(1, game.minPlayers || 1),
+      maxPlayers: Math.max(uniquePlayers.length, game.maxPlayers || uniquePlayers.length),
+      inviteCode: null
     };
+    if (room.visibility === 'private') {
+      room.inviteCode = this.assignInviteCode(room, inviteCode);
+    }
     this.rooms.set(id, room);
     players.forEach((player) => {
       this.playerRoom.set(player.id, id);
     });
-    const enginePlayerPayload = room.engine && typeof room.engine.describePlayer === 'function'
-      ? room.players.map((player) => room.engine.describePlayer(player))
-      : room.players.map((player) => ({ id: player.id, seat: player.seat, ready: player.ready }));
-    this.emitRoomEvent(room, 'room_created', { roomId: id, gameId, players: enginePlayerPayload });
+    const enginePlayerPayload = this.getPlayerPayload(room);
+    const payload = {
+      roomId: id,
+      gameId,
+      players: enginePlayerPayload,
+      visibility: room.visibility,
+      ownerId: room.ownerId,
+      allowSpectators: room.allowSpectators,
+      spectatorLimit: room.spectatorLimit,
+      spectatorDelayMs: room.spectatorDelayMs
+    };
+    this.emitRoomEvent(room, 'room_created', payload);
     return room;
+  }
+
+  getPlayerPayload(room) {
+    if (!room) {
+      return [];
+    }
+    if (room.engine && typeof room.engine.describePlayer === 'function') {
+      return room.players.map((player) => room.engine.describePlayer(player));
+    }
+    return room.players.map((player) => ({ id: player.id, seat: player.seat, ready: player.ready }));
+  }
+
+  assignInviteCode(room, requestedCode) {
+    if (!room || typeof room.id !== 'string') {
+      throw new Error('ROOM_CONTEXT_REQUIRED');
+    }
+    const preferred = normaliseInviteCode(requestedCode);
+    if (preferred && !this.inviteToRoom.has(preferred)) {
+      this.inviteToRoom.set(preferred, room.id);
+      return preferred;
+    }
+    let attempts = 0;
+    let code = preferred || generateInviteCode();
+    while (this.inviteToRoom.has(code)) {
+      code = generateInviteCode();
+      attempts += 1;
+      if (attempts > 100) {
+        throw new Error('INVITE_CODE_EXHAUSTED');
+      }
+    }
+    this.inviteToRoom.set(code, room.id);
+    return code;
+  }
+
+  findRoomByInvite(inviteCode) {
+    const code = normaliseInviteCode(inviteCode);
+    if (!code) {
+      return null;
+    }
+    const roomId = this.inviteToRoom.get(code);
+    if (!roomId) {
+      return null;
+    }
+    return this.getRoom(roomId);
   }
 
   getRoom(roomId) {
     return this.rooms.get(roomId) || null;
+  }
+
+  createPrivateRoom({ gameId, ownerId, allowSpectators = true, spectatorDelayMs, spectatorLimit }) {
+    if (typeof ownerId !== 'string' || ownerId.trim() === '') {
+      throw new Error('ROOM_OWNER_REQUIRED');
+    }
+    const existing = this.getRoomForPlayer(ownerId);
+    if (existing && existing.status !== 'finished') {
+      throw createError('MATCH_PLAYER_IN_ROOM', { meta: { roomId: existing.id } });
+    }
+    const room = this.createRoom({
+      gameId,
+      playerIds: [ownerId],
+      visibility: 'private',
+      ownerId,
+      allowSpectators,
+      spectatorDelayMs,
+      spectatorLimit
+    });
+    return room;
   }
 
   getRoomForPlayer(playerId) {
@@ -80,6 +250,295 @@ class RoomManager extends EventEmitter {
       return null;
     }
     return this.getRoom(roomId);
+  }
+
+  isPlayerBlocked(room, playerId) {
+    if (!room) {
+      return false;
+    }
+    if (room.ownerId && social.isMutuallyBlocked(room.ownerId, playerId)) {
+      return true;
+    }
+    return room.players.some((player) => social.isMutuallyBlocked(player.id, playerId));
+  }
+
+  joinRoom({ roomId, inviteCode, playerId }) {
+    let room = null;
+    if (roomId) {
+      room = this.getRoom(roomId);
+    }
+    if (!room && inviteCode) {
+      room = this.findRoomByInvite(inviteCode);
+    }
+    if (!room) {
+      if (inviteCode && !roomId) {
+        throw createError('ROOM_INVITE_INVALID');
+      }
+      throw createError('ROOM_NOT_FOUND');
+    }
+    if (room.visibility === 'private' && room.ownerId !== playerId) {
+      const provided = normaliseInviteCode(inviteCode);
+      if (!provided || room.inviteCode !== provided) {
+        throw createError('ROOM_INVITE_INVALID');
+      }
+    }
+    if (this.isPlayerBlocked(room, playerId)) {
+      throw createError('ROOM_PLAYER_BLOCKED');
+    }
+    return this.addPlayerInternal(room, playerId);
+  }
+
+  addPlayerInternal(room, playerId) {
+    if (!room) {
+      throw createError('ROOM_NOT_FOUND');
+    }
+    const existing = room.players.find((player) => player.id === playerId);
+    if (existing) {
+      existing.lastSeenAt = Date.now();
+      return room;
+    }
+    if (room.status === 'active') {
+      throw createError('ROOM_ALREADY_ACTIVE');
+    }
+    if (room.status === 'finished') {
+      throw createError('ROOM_ALREADY_FINISHED');
+    }
+    if (room.players.length >= room.maxPlayers) {
+      throw createError('ROOM_FULL');
+    }
+    const now = Date.now();
+    const playerIds = room.players.map((player) => player.id).concat(playerId);
+    const players = rebuildPlayers({
+      engine: room.engine,
+      gameId: room.gameId,
+      playerIds,
+      previousPlayers: room.players,
+      timestamp: now
+    });
+    room.players = players.map((player) => ({
+      ...player,
+      ready: false,
+      lastSeenAt: now
+    }));
+    room.players.forEach((player) => {
+      this.playerRoom.set(player.id, room.id);
+    });
+    room.updatedAt = now;
+    const payload = {
+      roomId: room.id,
+      playerId,
+      players: this.getPlayerPayload(room)
+    };
+    this.emitRoomEvent(room, 'player_joined', payload);
+    return room;
+  }
+
+  removePlayerInternal(room, playerId, reason = 'left') {
+    if (!room) {
+      throw createError('ROOM_NOT_FOUND');
+    }
+    const previousPlayers = room.players.slice();
+    const remaining = previousPlayers.filter((player) => player.id !== playerId);
+    if (remaining.length === previousPlayers.length) {
+      return room;
+    }
+    this.playerRoom.delete(playerId);
+    const now = Date.now();
+    room.updatedAt = now;
+    if (room.status === 'active') {
+      room.status = 'waiting';
+      room.engineState = null;
+      room.result = null;
+      this.emitRoomEvent(room, 'match_aborted', {
+        roomId: room.id,
+        playerId,
+        reason: 'player_left'
+      });
+    } else if (room.status === 'finished') {
+      room.status = 'waiting';
+      room.engineState = null;
+      room.result = null;
+    }
+    if (remaining.length > 0) {
+      const playerIds = remaining.map((player) => player.id);
+      const players = rebuildPlayers({
+        engine: room.engine,
+        gameId: room.gameId,
+        playerIds,
+        previousPlayers: remaining,
+        timestamp: now
+      });
+      room.players = players.map((player) => ({
+        ...player,
+        ready: false,
+        lastSeenAt: now
+      }));
+      room.players.forEach((player) => {
+        this.playerRoom.set(player.id, room.id);
+      });
+    } else {
+      room.players = [];
+    }
+    const payload = {
+      roomId: room.id,
+      playerId,
+      reason
+    };
+    this.emitRoomEvent(room, 'player_removed', payload);
+    return room;
+  }
+
+  leaveRoom({ roomId, playerId }) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      throw createError('ROOM_NOT_FOUND');
+    }
+    const member = room.players.find((player) => player.id === playerId);
+    if (!member) {
+      return room;
+    }
+    return this.removePlayerInternal(room, playerId, 'left');
+  }
+
+  kickPlayer({ roomId, operatorId, targetPlayerId }) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      throw createError('ROOM_NOT_FOUND');
+    }
+    if (room.ownerId !== operatorId) {
+      throw createError('ROOM_NOT_OWNER');
+    }
+    if (targetPlayerId === operatorId) {
+      return this.leaveRoom({ roomId, playerId: targetPlayerId });
+    }
+    return this.removePlayerInternal(room, targetPlayerId, 'kicked');
+  }
+
+  joinAsSpectator({ roomId, playerId, inviteCode }) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      throw createError('ROOM_NOT_FOUND');
+    }
+    if (!room.allowSpectators) {
+      throw createError('ROOM_SPECTATORS_DISABLED');
+    }
+    if (room.players.some((player) => player.id === playerId)) {
+      throw createError('ROOM_SPECTATOR_FORBIDDEN');
+    }
+    if (room.visibility === 'private' && room.ownerId !== playerId) {
+      const provided = normaliseInviteCode(inviteCode);
+      if (!provided || room.inviteCode !== provided) {
+        throw createError('ROOM_INVITE_INVALID');
+      }
+    }
+    if (this.isPlayerBlocked(room, playerId)) {
+      throw createError('ROOM_PLAYER_BLOCKED');
+    }
+    const now = Date.now();
+    const existing = room.spectators.get(playerId);
+    if (existing) {
+      existing.lastSeenAt = now;
+      return { room, spectator: existing, created: false, delayMs: room.spectatorDelayMs };
+    }
+    if (room.spectators.size >= room.spectatorLimit) {
+      throw createError('ROOM_SPECTATORS_LIMIT');
+    }
+    const spectator = { id: playerId, joinedAt: now, lastSeenAt: now };
+    room.spectators.set(playerId, spectator);
+    let rooms = this.spectatorRooms.get(playerId);
+    if (!rooms) {
+      rooms = new Set();
+      this.spectatorRooms.set(playerId, rooms);
+    }
+    rooms.add(room.id);
+    room.updatedAt = now;
+    this.emitRoomEvent(room, 'spectator_joined', {
+      roomId: room.id,
+      spectatorId: playerId,
+      count: room.spectators.size
+    });
+    return { room, spectator, created: true, delayMs: room.spectatorDelayMs };
+  }
+
+  removeSpectator({ roomId, spectatorId }) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return;
+    }
+    const spectator = room.spectators.get(spectatorId);
+    if (!spectator) {
+      return;
+    }
+    room.spectators.delete(spectatorId);
+    const rooms = this.spectatorRooms.get(spectatorId);
+    if (rooms) {
+      rooms.delete(roomId);
+      if (rooms.size === 0) {
+        this.spectatorRooms.delete(spectatorId);
+      }
+    }
+    room.updatedAt = Date.now();
+    this.emitRoomEvent(room, 'spectator_left', {
+      roomId: room.id,
+      spectatorId,
+      count: room.spectators.size
+    });
+  }
+
+  updateRoomSettings({ roomId, operatorId, allowSpectators, spectatorDelayMs, spectatorLimit }) {
+    const room = this.getRoom(roomId);
+    if (!room) {
+      throw createError('ROOM_NOT_FOUND');
+    }
+    if (room.ownerId !== operatorId) {
+      throw createError('ROOM_NOT_OWNER');
+    }
+    let changed = false;
+    if (typeof allowSpectators === 'boolean' && room.allowSpectators !== allowSpectators) {
+      room.allowSpectators = allowSpectators;
+      changed = true;
+      if (!allowSpectators) {
+        Array.from(room.spectators.keys()).forEach((spectatorId) => {
+          this.removeSpectator({ roomId, spectatorId });
+        });
+      }
+    }
+    if (spectatorDelayMs !== undefined) {
+      const parsedDelay = parseSpectatorDelay(spectatorDelayMs);
+      if (parsedDelay !== room.spectatorDelayMs) {
+        room.spectatorDelayMs = parsedDelay;
+        changed = true;
+      }
+    }
+    if (spectatorLimit !== undefined) {
+      const parsedLimit = parseSpectatorLimit(spectatorLimit);
+      if (parsedLimit !== room.spectatorLimit) {
+        room.spectatorLimit = parsedLimit;
+        changed = true;
+        if (room.spectators.size > room.spectatorLimit) {
+          const overflow = room.spectators.size - room.spectatorLimit;
+          if (overflow > 0) {
+            const removalOrder = Array.from(room.spectators.values())
+              .sort((a, b) => a.joinedAt - b.joinedAt)
+              .slice(-overflow);
+            removalOrder.forEach((spectator) => {
+              this.removeSpectator({ roomId, spectatorId: spectator.id });
+            });
+          }
+        }
+      }
+    }
+    if (!changed) {
+      return room;
+    }
+    room.updatedAt = Date.now();
+    this.emitRoomEvent(room, 'room_settings_updated', {
+      roomId: room.id,
+      allowSpectators: room.allowSpectators,
+      spectatorDelayMs: room.spectatorDelayMs,
+      spectatorLimit: room.spectatorLimit
+    });
+    return room;
   }
 
   requireRoomMember(roomId, playerId) {
@@ -104,8 +563,9 @@ class RoomManager extends EventEmitter {
       return room;
     }
     player.ready = true;
+    room.updatedAt = Date.now();
     this.emitRoomEvent(room, 'player_ready', { roomId, playerId });
-    if (room.players.every((p) => p.ready)) {
+    if (room.players.length >= room.minPlayers && room.players.every((p) => p.ready)) {
       this.startMatch(room);
     }
     return room;
@@ -115,9 +575,13 @@ class RoomManager extends EventEmitter {
     if (room.status === 'active') {
       return;
     }
+    if (room.players.length < room.minPlayers) {
+      return;
+    }
     if (!room.engine || typeof room.engine.createInitialState !== 'function') {
       throw new Error('ENGINE_MISSING_CREATE_STATE');
     }
+    room.result = null;
     room.engineState = room.engine.createInitialState({ room });
     room.status = 'active';
     room.updatedAt = Date.now();
@@ -214,6 +678,14 @@ class RoomManager extends EventEmitter {
       sequence: room.sequence,
       result: room.result,
       state: statePayload,
+      visibility: room.visibility,
+      ownerId: room.ownerId,
+      allowSpectators: room.allowSpectators,
+      spectatorCount: room.spectators ? room.spectators.size : 0,
+      spectatorLimit: room.spectatorLimit,
+      spectatorDelayMs: room.spectatorDelayMs,
+      createdAt: room.createdAt,
+      updatedAt: room.updatedAt,
       nextTurnPlayerId: statePayload && Object.prototype.hasOwnProperty.call(statePayload, 'nextTurnPlayerId')
         ? statePayload.nextTurnPlayerId
         : null
@@ -244,6 +716,21 @@ class RoomManager extends EventEmitter {
     return [this.buildPublicState(room)];
   }
 
+  listSpectatingRooms(playerId) {
+    const roomIds = this.spectatorRooms.get(playerId);
+    if (!roomIds || roomIds.size === 0) {
+      return [];
+    }
+    const snapshots = [];
+    roomIds.forEach((roomId) => {
+      const room = this.getRoom(roomId);
+      if (room) {
+        snapshots.push(this.buildPublicState(room));
+      }
+    });
+    return snapshots;
+  }
+
   getEventsSince(roomId, sequence) {
     const room = this.getRoom(roomId);
     if (!room) {
@@ -255,6 +742,8 @@ class RoomManager extends EventEmitter {
   reset() {
     this.rooms.clear();
     this.playerRoom.clear();
+    this.inviteToRoom.clear();
+    this.spectatorRooms.clear();
   }
 }
 
