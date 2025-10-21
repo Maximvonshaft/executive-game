@@ -129,6 +129,21 @@ const ERROR_CODES = {
     message: 'Requested room action is not supported.',
     userMessage: '不支持的房间操作。'
   },
+  AI_GAME_UNSUPPORTED: {
+    httpStatus: 400,
+    message: 'Requested game is not supported for AI suggestions.',
+    userMessage: '当前玩法暂不支持 AI 建议。'
+  },
+  AI_POSITION_INVALID: {
+    httpStatus: 400,
+    message: 'Provided position is invalid or inconsistent.',
+    userMessage: '局面数据不合法，请检查后再试。'
+  },
+  AI_RATE_LIMITED: {
+    httpStatus: 429,
+    message: 'Suggestion frequency limit reached.',
+    userMessage: '提示请求过于频繁，请稍后再试。'
+  },
   CONFIG_MISSING_SECRET: {
     httpStatus: 500,
     message: 'Required secret is missing from configuration.',

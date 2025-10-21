@@ -143,6 +143,7 @@ function serializeBoard(board) {
 
 module.exports = {
   BOARD_SIZE,
+  LINE_TARGET,
   createInitialState,
   applyMove,
   serializeBoard

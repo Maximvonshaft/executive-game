@@ -10,6 +10,7 @@ const { authenticateHttpRequest } = require('./utils/auth');
 const { setupRealtime } = require('./realtime/gateway');
 const progression = require('./services/progression');
 const social = require('./services/socialService');
+const aiTraining = require('./services/aiService');
 progression.ensureListener();
 
 function setSecurityHeaders(res) {
@@ -351,6 +352,35 @@ async function requestHandler(req, res) {
         const joinedRoom = roomManager.joinRoom({ roomId: room.id, inviteCode, playerId });
         const snapshot = decorateRoomSnapshot(roomManager.buildPublicState(joinedRoom), 'player', playerId);
         respondSuccess(res, { room: snapshot, role: 'player' });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/ai/suggest') {
+    try {
+      const body = await parseBody(req);
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const gameId = typeof body.gameId === 'string' ? body.gameId : 'gomoku';
+        const moves = Array.isArray(body.moves)
+          ? body.moves
+          : Array.isArray(body.position?.moves)
+            ? body.position.moves
+            : undefined;
+        const nextPlayer = body.nextPlayer ?? body.position?.nextPlayer ?? body.position?.playerToMove ?? null;
+        const limit = body.limit !== undefined ? Number(body.limit) : undefined;
+        const suggestion = aiTraining.getSuggestions({
+          playerId,
+          gameId,
+          moves,
+          nextPlayer,
+          limit,
+          mode: body.mode
+        });
+        respondSuccess(res, { suggestion });
       });
     } catch (error) {
       handleError(error, res);
