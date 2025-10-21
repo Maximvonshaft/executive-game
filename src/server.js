@@ -1,5 +1,9 @@
 const http = require('http');
 const { URL } = require('url');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
+const { pipeline } = require('stream/promises');
 const { config } = require('./config/env');
 const { ApplicationError, ERROR_CODES, createError } = require('./errors/codes');
 const { authenticateWithTelegram } = require('./services/authService');
@@ -15,6 +19,119 @@ const audit = require('./services/auditService');
 const adminConfig = require('./services/adminConfigService');
 const i18n = require('./services/i18nService');
 const { authenticateAdminRequest } = require('./utils/adminAuth');
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2'
+};
+
+function getMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return MIME_TYPES[ext] || 'application/octet-stream';
+}
+
+function normalizeRequestPath(rawPath) {
+  if (!rawPath || rawPath === '/') {
+    return 'index.html';
+  }
+  const decoded = decodeURIComponent(rawPath);
+  const normalized = path.posix.normalize(decoded);
+  if (normalized === '/' || normalized === '.') {
+    return 'index.html';
+  }
+  return normalized.startsWith('/') ? normalized.slice(1) : normalized;
+}
+
+function resolveStaticRoot() {
+  const configured = process.env.STATIC_ROOT ? process.env.STATIC_ROOT.trim() : '';
+  if (configured) {
+    return path.resolve(configured);
+  }
+  return path.resolve(__dirname, '../app/dist');
+}
+
+async function tryServeStatic(req, res, url) {
+  if (!['GET', 'HEAD'].includes(req.method)) {
+    return false;
+  }
+  let relativePath;
+  try {
+    relativePath = normalizeRequestPath(url.pathname);
+  } catch (error) {
+    return false;
+  }
+  if (relativePath.includes('\0')) {
+    return false;
+  }
+  const segments = relativePath.split('/');
+  if (segments.some((segment) => segment === '..')) {
+    return false;
+  }
+  const staticRoot = resolveStaticRoot();
+  const staticIndex = path.join(staticRoot, 'index.html');
+  try {
+    await fsp.access(staticIndex, fs.constants.R_OK);
+  } catch (error) {
+    return false;
+  }
+
+  let absolutePath = path.join(staticRoot, relativePath);
+  if (!absolutePath.startsWith(staticRoot)) {
+    return false;
+  }
+
+  let stats;
+  try {
+    stats = await fsp.stat(absolutePath);
+    if (stats.isDirectory()) {
+      absolutePath = path.join(absolutePath, 'index.html');
+      stats = await fsp.stat(absolutePath);
+    }
+  } catch (error) {
+    if (path.extname(relativePath) === '') {
+      absolutePath = staticIndex;
+      try {
+        stats = await fsp.stat(absolutePath);
+      } catch (fallbackError) {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  const isHtml = path.extname(absolutePath).toLowerCase() === '.html';
+  const cacheControl = isHtml ? 'no-store, must-revalidate' : 'public, max-age=31536000, immutable';
+  res.setHeader('Content-Type', getMimeType(absolutePath));
+  res.setHeader('Cache-Control', cacheControl);
+  res.setHeader('Content-Length', stats.size);
+  res.statusCode = 200;
+  if (req.method === 'HEAD') {
+    res.end();
+    return true;
+  }
+  const stream = fs.createReadStream(absolutePath);
+  try {
+    await pipeline(stream, res);
+  } catch (error) {
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ success: false, error: { code: 'STATIC_SERVE_FAILED', message: '静态资源加载失败' } }));
+  }
+  return true;
+}
 progression.ensureListener();
 if (config.admin && typeof config.admin.fallbackLanguage === 'string') {
   i18n.setFallbackLanguage(config.admin.fallbackLanguage);
@@ -783,6 +900,10 @@ async function requestHandler(req, res) {
     } catch (error) {
       handleError(error, res);
     }
+    return;
+  }
+
+  if (await tryServeStatic(req, res, url)) {
     return;
   }
 
