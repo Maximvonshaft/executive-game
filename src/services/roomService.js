@@ -2,7 +2,7 @@ const { randomUUID } = require('crypto');
 const { EventEmitter } = require('events');
 const { createError } = require('../errors/codes');
 const { getGameById } = require('./gameService');
-const { createInitialState, applyMove, serializeBoard } = require('../engines/gomoku');
+const { getEngineAdapter } = require('../engines/registry');
 
 class RoomManager extends EventEmitter {
   constructor() {
@@ -16,15 +16,36 @@ class RoomManager extends EventEmitter {
     if (!game) {
       throw createError('MATCH_GAME_NOT_FOUND');
     }
+    const engine = getEngineAdapter(gameId);
+    if (!engine) {
+      throw createError('MATCH_GAME_NOT_FOUND');
+    }
+    const seatAssignments = engine.assignSeats({ gameId, playerIds });
+    if (!Array.isArray(seatAssignments) || seatAssignments.length !== playerIds.length) {
+      throw new Error('ENGINE_SEAT_ASSIGNMENT_INVALID');
+    }
     const id = randomUUID();
     const now = Date.now();
-    const players = playerIds.map((playerId, index) => ({
-      id: playerId,
-      seat: index,
-      stone: index === 0 ? 'black' : 'white',
-      ready: false,
-      lastSeenAt: now
-    }));
+    const players = seatAssignments.map((assignment, index) => {
+      if (!assignment || typeof assignment !== 'object') {
+        throw new Error('ENGINE_SEAT_DESCRIPTOR_INVALID');
+      }
+      const seat = Number.isInteger(assignment.seat) ? assignment.seat : index;
+      const base = {
+        id: playerIds[index],
+        seat,
+        ready: false,
+        lastSeenAt: now,
+        attributes: assignment.attributes ? { ...assignment.attributes } : {}
+      };
+      Object.keys(assignment).forEach((key) => {
+        if (key === 'seat' || key === 'attributes') {
+          return;
+        }
+        base[key] = assignment[key];
+      });
+      return base;
+    });
     const room = {
       id,
       gameId,
@@ -35,13 +56,17 @@ class RoomManager extends EventEmitter {
       events: [],
       sequence: 0,
       engineState: null,
-      result: null
+      result: null,
+      engine
     };
     this.rooms.set(id, room);
     players.forEach((player) => {
       this.playerRoom.set(player.id, id);
     });
-    this.emitRoomEvent(room, 'room_created', { roomId: id, gameId, players: players.map((p) => ({ id: p.id, seat: p.seat, stone: p.stone })) });
+    const enginePlayerPayload = room.engine && typeof room.engine.describePlayer === 'function'
+      ? room.players.map((player) => room.engine.describePlayer(player))
+      : room.players.map((player) => ({ id: player.id, seat: player.seat, ready: player.ready }));
+    this.emitRoomEvent(room, 'room_created', { roomId: id, gameId, players: enginePlayerPayload });
     return room;
   }
 
@@ -90,72 +115,62 @@ class RoomManager extends EventEmitter {
     if (room.status === 'active') {
       return;
     }
-    room.engineState = createInitialState();
+    if (!room.engine || typeof room.engine.createInitialState !== 'function') {
+      throw new Error('ENGINE_MISSING_CREATE_STATE');
+    }
+    room.engineState = room.engine.createInitialState({ room });
     room.status = 'active';
     room.updatedAt = Date.now();
-    this.emitRoomEvent(room, 'match_started', {
-      roomId: room.id,
-      gameId: room.gameId,
-      players: room.players.map((p) => ({ id: p.id, stone: p.stone, seat: p.seat }))
-    });
-    const currentPlayer = room.players[room.engineState.nextPlayerIndex];
-    this.emitRoomEvent(room, 'turn_started', {
-      roomId: room.id,
-      playerId: currentPlayer.id,
-      stone: currentPlayer.stone
-    });
+    const startPayload = room.engine.describeMatchStart({ room, state: room.engineState });
+    this.emitRoomEvent(room, 'match_started', startPayload);
+    const turnInfo = room.engine.getTurnInfo({ room, state: room.engineState });
+    if (turnInfo) {
+      this.emitRoomEvent(room, 'turn_started', turnInfo);
+    }
   }
 
-  applyPlayerAction({ roomId, playerId, x, y }) {
+  applyPlayerAction({ roomId, playerId, action }) {
     const { room, player } = this.requireRoomMember(roomId, playerId);
     if (room.status !== 'active') {
       return { error: 'ROOM_NOT_ACTIVE', room };
     }
-    const playerIndex = player.seat;
-    const result = applyMove(room.engineState, { x, y, playerIndex });
-    if (result.error) {
+    if (!room.engine) {
+      throw new Error('ENGINE_NOT_INITIALIZED');
+    }
+    const playerIndex = room.players.findIndex((p) => p.id === player.id);
+    if (playerIndex === -1) {
+      throw new Error('PLAYER_INDEX_NOT_FOUND');
+    }
+    const outcome = room.engine.applyAction({ room, state: room.engineState, players: room.players, playerIndex, action, player });
+    if (outcome.error) {
       this.emitRoomEvent(room, 'action_rejected', {
         roomId,
         playerId,
-        reason: result.error,
-        position: { x, y }
+        reason: outcome.error,
+        action
       });
-      return { error: result.error, room };
+      return { error: outcome.error, room };
     }
-    room.engineState = result.state;
+    room.engineState = outcome.state;
     room.updatedAt = Date.now();
-    this.emitRoomEvent(room, 'action_applied', {
-      roomId,
-      playerId,
-      stone: player.stone,
-      position: { x, y },
-      board: serializeBoard(room.engineState.board),
-      moves: room.engineState.moves.map((move) => ({
-        x: move.x,
-        y: move.y,
-        stone: move.playerIndex === 0 ? 'black' : 'white'
-      }))
-    });
-    if (result.result) {
+    if (Array.isArray(outcome.events)) {
+      outcome.events.forEach((event) => {
+        if (!event || typeof event.type !== 'string') {
+          return;
+        }
+        this.emitRoomEvent(room, event.type, event.payload || {});
+      });
+    }
+    if (outcome.result) {
       room.status = 'finished';
-      room.result = {
-        winnerId: result.result.winner !== null ? room.players[result.result.winner].id : null,
-        reason: result.result.reason,
-        winningLine: result.result.winningLine
-      };
-      this.emitRoomEvent(room, 'match_result', {
-        roomId,
-        winnerId: room.result.winnerId,
-        reason: room.result.reason,
-        winningLine: room.result.winningLine
-      });
+      const { summary, eventPayload } = room.engine.describeResult({ room, state: room.engineState, result: outcome.result });
+      room.result = summary;
+      this.emitRoomEvent(room, 'match_result', eventPayload || {});
     } else {
-      const nextPlayer = room.players[room.engineState.nextPlayerIndex];
-      this.emitRoomEvent(room, 'turn_started', {
-        roomId,
-        playerId: nextPlayer.id,
-        stone: nextPlayer.stone
-      });
+      const turnInfo = room.engine.getTurnInfo({ room, state: room.engineState });
+      if (turnInfo) {
+        this.emitRoomEvent(room, 'turn_started', turnInfo);
+      }
     }
     return { room };
   }
@@ -185,30 +200,40 @@ class RoomManager extends EventEmitter {
   }
 
   buildPublicState(room) {
-    return {
+    const playerPayloads = room.engine && typeof room.engine.describePlayer === 'function'
+      ? room.players.map((player) => room.engine.describePlayer(player))
+      : room.players.map((player) => ({ id: player.id, seat: player.seat, ready: player.ready }));
+    const statePayload = room.engine && typeof room.engine.getPublicState === 'function'
+      ? room.engine.getPublicState({ room, state: room.engineState })
+      : {};
+    const snapshot = {
       roomId: room.id,
       gameId: room.gameId,
       status: room.status,
-      players: room.players.map((player) => ({
-        id: player.id,
-        seat: player.seat,
-        stone: player.stone,
-        ready: player.ready
-      })),
+      players: playerPayloads,
       sequence: room.sequence,
       result: room.result,
-      board: room.engineState ? serializeBoard(room.engineState.board) : null,
-      moves: room.engineState
-        ? room.engineState.moves.map((move) => ({
-          x: move.x,
-          y: move.y,
-          stone: move.playerIndex === 0 ? 'black' : 'white'
-        }))
-        : [],
-      nextTurnPlayerId: room.engineState && !room.engineState.finished
-        ? room.players[room.engineState.nextPlayerIndex].id
+      state: statePayload,
+      nextTurnPlayerId: statePayload && Object.prototype.hasOwnProperty.call(statePayload, 'nextTurnPlayerId')
+        ? statePayload.nextTurnPlayerId
         : null
     };
+    if (statePayload && Object.prototype.hasOwnProperty.call(statePayload, 'board')) {
+      snapshot.board = statePayload.board;
+    }
+    if (statePayload && Object.prototype.hasOwnProperty.call(statePayload, 'moves')) {
+      snapshot.moves = statePayload.moves;
+    }
+    if (statePayload && Object.prototype.hasOwnProperty.call(statePayload, 'handCounts')) {
+      snapshot.handCounts = statePayload.handCounts;
+    }
+    if (statePayload && Object.prototype.hasOwnProperty.call(statePayload, 'community')) {
+      snapshot.community = statePayload.community;
+    }
+    if (statePayload && Object.prototype.hasOwnProperty.call(statePayload, 'currentSeat')) {
+      snapshot.currentSeat = statePayload.currentSeat;
+    }
+    return snapshot;
   }
 
   listRoomsForPlayer(playerId) {

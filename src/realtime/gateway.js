@@ -89,14 +89,21 @@ function setupRealtime(server) {
   }
 
   function handlePlayAction(context, message) {
-    const { roomId, position } = message;
-    if (!roomId || !position) {
+    const { roomId } = message;
+    if (!roomId) {
       context.connection.sendText(createMessage('error', { code: 'ACTION_INVALID' }));
       return;
     }
-    const { x, y } = position;
+    let { action } = message;
+    if (!action && message.position) {
+      action = { position: message.position };
+    }
+    if (!action || typeof action !== 'object') {
+      context.connection.sendText(createMessage('error', { code: 'ACTION_INVALID' }));
+      return;
+    }
     try {
-      roomManager.applyPlayerAction({ roomId, playerId: context.playerId, x, y });
+      roomManager.applyPlayerAction({ roomId, playerId: context.playerId, action });
     } catch (error) {
       if (error instanceof ApplicationError) {
         context.connection.sendText(createMessage('error', { code: error.code }));

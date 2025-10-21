@@ -24,7 +24,7 @@ interface GomokuState {
 
 ## 纯函数接口
 - `createInitialState(): GomokuState` — 创建初始局面。
-- `applyMove(state, action)` — 执行落子动作：
+- `applyMove(state, action)` — 执行落子动作（WebSocket `play_action` 需携带 `{ action: { position: { x, y } } }`，兼容 Phase 1 的 `position` 字段会自动转换）：
   - 入参：`{ x: number; y: number; playerIndex: 0 | 1 }`
   - 返回值：
     ```ts
