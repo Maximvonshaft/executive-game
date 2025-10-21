@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Practice Card Games Auth API
-  version: 0.1.0
+  title: Practice Card Games Realtime API
+  version: 0.2.0
   description: |
-    基于 Telegram WebApp initData 的登录与会话管理接口。Phase 0 仅包含单一登录入口，未来阶段可按版本号扩展。
+    Phase 1 在 Phase 0 登录基础上，新增大厅/匹配/房间接口及五子棋实时对局契约。
 servers:
   - url: https://dev.api.practice-card.games
     description: 开发环境
@@ -46,39 +46,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: object
-                    properties:
-                      token:
-                        type: string
-                        description: HS256 JWT 令牌
-                      expiresIn:
-                        type: integer
-                        description: 令牌有效期（秒）
-                      issuedAt:
-                        type: integer
-                        description: 令牌签发时间戳（秒）
-                      user:
-                        type: object
-                        nullable: true
-                        properties:
-                          id:
-                            type: integer
-                          firstName:
-                            type: string
-                          lastName:
-                            type: string
-                          username:
-                            type: string
-                          languageCode:
-                            type: string
-                          photoUrl:
-                            type: string
+                $ref: '#/components/schemas/AuthSuccess'
         '400':
           description: 请求参数错误
           content:
@@ -93,6 +61,224 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/games:
+    get:
+      summary: 列出可用游戏
+      operationId: listGames
+      tags:
+        - lobby
+      responses:
+        '200':
+          description: 游戏列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      games:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Game'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/match/start:
+    post:
+      summary: 发起匹配
+      operationId: startMatch
+      tags:
+        - match
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gameId:
+                  type: string
+                  description: 默认 `gomoku`
+                  example: gomoku
+      responses:
+        '200':
+          description: 匹配队列受理
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      ticket:
+                        $ref: '#/components/schemas/MatchTicket'
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 玩家已在对局或其他冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/match/cancel:
+    post:
+      summary: 取消匹配
+      operationId: cancelMatch
+      tags:
+        - match
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - ticketId
+              properties:
+                ticketId:
+                  type: string
+      responses:
+        '200':
+          description: 取消成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      cancelled:
+                        type: boolean
+                        example: true
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: ticket 不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: ticket 已生成房间
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/rooms:
+    get:
+      summary: 查询玩家关联房间
+      operationId: listRooms
+      tags:
+        - rooms
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 房间列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      rooms:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RoomState'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/rooms/join:
+    post:
+      summary: 获取房间快照（并触发 WebSocket 订阅）
+      operationId: joinRoom
+      tags:
+        - rooms
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - roomId
+              properties:
+                roomId:
+                  type: string
+      responses:
+        '200':
+          description: 返回房间状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      room:
+                        $ref: '#/components/schemas/RoomState'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 非房间成员
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 房间不存在
           content:
             application/json:
               schema:
@@ -117,6 +303,159 @@ components:
             details:
               type: object
               nullable: true
+    AuthSuccess:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            token:
+              type: string
+            expiresIn:
+              type: integer
+            issuedAt:
+              type: integer
+            user:
+              type: object
+              nullable: true
+              properties:
+                id:
+                  type: integer
+                firstName:
+                  type: string
+                lastName:
+                  type: string
+                username:
+                  type: string
+                languageCode:
+                  type: string
+                photoUrl:
+                  type: string
+    Game:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        minPlayers:
+          type: integer
+        maxPlayers:
+          type: integer
+        turnOrder:
+          type: string
+        rulesVersion:
+          type: string
+        metadata:
+          type: object
+          properties:
+            boardSize:
+              type: integer
+            firstMove:
+              type: string
+            timeLimitSeconds:
+              type: integer
+    MatchTicket:
+      type: object
+      properties:
+        ticketId:
+          type: string
+        status:
+          type: string
+          enum:
+            - waiting
+            - matched
+        gameId:
+          type: string
+        roomId:
+          type: string
+          nullable: true
+        createdAt:
+          type: integer
+        matchedAt:
+          type: integer
+          nullable: true
+    RoomState:
+      type: object
+      properties:
+        roomId:
+          type: string
+        gameId:
+          type: string
+        status:
+          type: string
+          enum:
+            - waiting
+            - active
+            - finished
+        players:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              seat:
+                type: integer
+              stone:
+                type: string
+                enum:
+                  - black
+                  - white
+              ready:
+                type: boolean
+        sequence:
+          type: integer
+        board:
+          type: array
+          nullable: true
+          items:
+            type: array
+            items:
+              type: string
+              nullable: true
+        moves:
+          type: array
+          items:
+            type: object
+            properties:
+              x:
+                type: integer
+              y:
+                type: integer
+              stone:
+                type: string
+                enum:
+                  - black
+                  - white
+        result:
+          type: object
+          nullable: true
+          properties:
+            winnerId:
+              type: string
+              nullable: true
+            reason:
+              type: string
+            winningLine:
+              type: array
+              nullable: true
+              items:
+                type: object
+                properties:
+                  x:
+                    type: integer
+                  y:
+                    type: integer
+        nextTurnPlayerId:
+          type: string
+          nullable: true
   securitySchemes:
     bearerAuth:
       type: http
