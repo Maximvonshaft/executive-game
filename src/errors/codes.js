@@ -24,10 +24,65 @@ const ERROR_CODES = {
     message: 'Telegram initData is expired.',
     userMessage: '登录已过期，请重新登录。'
   },
-  CONFIG_MISSING_SECRET: {
-    httpStatus: 500,
-    message: 'Required secret is missing from environment.',
-    userMessage: '服务配置缺失，请稍后重试。'
+  AUTH_TOKEN_REQUIRED: {
+    httpStatus: 401,
+    message: 'Authorization token required.',
+    userMessage: '请先登录后再进行操作。'
+  },
+  AUTH_TOKEN_INVALID: {
+    httpStatus: 401,
+    message: 'Authorization token is invalid.',
+    userMessage: '会话已失效，请重新登录。'
+  },
+  REQUEST_BODY_INVALID: {
+    httpStatus: 400,
+    message: 'Request body is not valid JSON.',
+    userMessage: '请求格式错误，请稍后重试。'
+  },
+  MATCH_GAME_NOT_FOUND: {
+    httpStatus: 404,
+    message: 'Requested game was not found.',
+    userMessage: '找不到对应的游戏，请刷新后重试。'
+  },
+  MATCH_PLAYER_IN_ROOM: {
+    httpStatus: 409,
+    message: 'Player already participates in an active room.',
+    userMessage: '正在进行中的对局无法重复匹配。'
+  },
+  MATCH_TICKET_NOT_FOUND: {
+    httpStatus: 404,
+    message: 'Matchmaking ticket not found.',
+    userMessage: '匹配请求不存在或已过期。'
+  },
+  MATCH_TICKET_FORBIDDEN: {
+    httpStatus: 403,
+    message: 'Ticket does not belong to the current player.',
+    userMessage: '无权取消该匹配请求。'
+  },
+  MATCH_ALREADY_ASSIGNED: {
+    httpStatus: 409,
+    message: 'Match already assigned to a room.',
+    userMessage: '对局已生成，无法取消。'
+  },
+  ROOM_NOT_FOUND: {
+    httpStatus: 404,
+    message: 'Room not found.',
+    userMessage: '房间不存在或已关闭。'
+  },
+  ROOM_NOT_MEMBER: {
+    httpStatus: 403,
+    message: 'Player is not part of the room.',
+    userMessage: '您无权访问该房间。'
+  },
+  ROOM_ID_REQUIRED: {
+    httpStatus: 400,
+    message: 'Room id is required.',
+    userMessage: '缺少房间编号。'
+  },
+  ROOM_ALREADY_FINISHED: {
+    httpStatus: 409,
+    message: 'Room already finished.',
+    userMessage: '对局已结束。'
   },
   SERVER_ERROR: {
     httpStatus: 500,

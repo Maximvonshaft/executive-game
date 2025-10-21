@@ -1,8 +1,13 @@
 const http = require('http');
 const { URL } = require('url');
 const { config } = require('./config/env');
-const { ApplicationError, ERROR_CODES } = require('./errors/codes');
+const { ApplicationError, ERROR_CODES, createError } = require('./errors/codes');
 const { authenticateWithTelegram } = require('./services/authService');
+const { listGames, getGameById } = require('./services/gameService');
+const { matchmaker } = require('./services/matchService');
+const { roomManager } = require('./services/roomService');
+const { authenticateHttpRequest } = require('./utils/auth');
+const { setupRealtime } = require('./realtime/gateway');
 
 function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -36,13 +41,23 @@ function parseBody(req) {
         const json = JSON.parse(raw);
         resolve(json);
       } catch (error) {
-        reject(new ApplicationError('AUTH_MALFORMED_INITDATA', { cause: error }));
+        reject(new ApplicationError('REQUEST_BODY_INVALID', { cause: error }));
       }
     });
     req.on('error', (error) => {
       reject(error);
     });
   });
+}
+
+function sendJson(res, statusCode, payload) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(payload));
+}
+
+function respondSuccess(res, data) {
+  sendJson(res, 200, { success: true, data });
 }
 
 function handleError(error, res) {
@@ -61,6 +76,22 @@ function handleError(error, res) {
   res.end(JSON.stringify(payload));
 }
 
+function formatTicket(ticket) {
+  return {
+    ticketId: ticket.id,
+    status: ticket.status,
+    gameId: ticket.gameId,
+    roomId: ticket.roomId || null,
+    createdAt: ticket.createdAt,
+    matchedAt: ticket.matchedAt || null
+  };
+}
+
+async function handleAuthenticated(req, handler) {
+  const session = authenticateHttpRequest(req);
+  return handler(session);
+}
+
 async function requestHandler(req, res) {
   setSecurityHeaders(res);
   const origin = req.headers.host ? `http://${req.headers.host}` : 'http://localhost';
@@ -73,8 +104,12 @@ async function requestHandler(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname === '/healthz') {
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ status: 'ok', env: config.env }));
+    respondSuccess(res, { status: 'ok', env: config.env });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/games') {
+    respondSuccess(res, { games: listGames() });
     return;
   }
 
@@ -86,8 +121,78 @@ async function requestHandler(req, res) {
         throw new ApplicationError('AUTH_INITDATA_REQUIRED');
       }
       const session = authenticateWithTelegram(initData);
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ success: true, data: session }));
+      respondSuccess(res, session);
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/match/start') {
+    try {
+      const body = await parseBody(req);
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const gameId = typeof body.gameId === 'string' ? body.gameId : 'gomoku';
+        if (!getGameById(gameId)) {
+          throw createError('MATCH_GAME_NOT_FOUND');
+        }
+        const ticket = matchmaker.start({ playerId, gameId });
+        respondSuccess(res, { ticket: formatTicket(ticket) });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/match/cancel') {
+    try {
+      const body = await parseBody(req);
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const ticketId = typeof body.ticketId === 'string' ? body.ticketId : body.ticketId?.ticketId;
+        if (!ticketId) {
+          throw createError('MATCH_TICKET_NOT_FOUND');
+        }
+        const result = matchmaker.cancel({ ticketId, playerId });
+        respondSuccess(res, result);
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/rooms') {
+    try {
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const rooms = roomManager.listRoomsForPlayer(playerId);
+        respondSuccess(res, { rooms });
+      });
+    } catch (error) {
+      handleError(error, res);
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/rooms/join') {
+    try {
+      const body = await parseBody(req);
+      await handleAuthenticated(req, ({ payload }) => {
+        const playerId = payload.telegramUserId || payload.sub;
+        const roomId = typeof body.roomId === 'string' ? body.roomId : null;
+        if (!roomId) {
+          throw createError('ROOM_ID_REQUIRED');
+        }
+        const snapshot = roomManager.getRoomSnapshot(roomId);
+        const isMember = snapshot.players.some((player) => player.id === playerId);
+        if (!isMember) {
+          throw createError('ROOM_NOT_MEMBER');
+        }
+        respondSuccess(res, { room: snapshot });
+      });
     } catch (error) {
       handleError(error, res);
     }
@@ -105,6 +210,8 @@ function startServer() {
       handleError(error, res);
     });
   });
+  const realtime = setupRealtime(server);
+  server.realtimeShutdown = realtime.shutdown;
   server.listen(config.port, () => {
     process.stdout.write(`Server listening on port ${config.port} (env: ${config.env})\n`);
   });
