@@ -3,6 +3,7 @@ const { EventEmitter } = require('events');
 const { createError } = require('../errors/codes');
 const { getGameById } = require('./gameService');
 const { roomManager } = require('./roomService');
+const observability = require('./observability');
 
 class MatchmakingService extends EventEmitter {
   constructor() {
@@ -13,15 +14,23 @@ class MatchmakingService extends EventEmitter {
   }
 
   start({ playerId, gameId }) {
+    const span = observability.startSpan('matchmaker.start', { playerId, gameId });
     const game = getGameById(gameId);
     if (!game) {
+      span.recordException(new Error('MATCH_GAME_NOT_FOUND'));
+      span.end({ statusCode: 'ERROR', message: 'MATCH_GAME_NOT_FOUND' });
       throw createError('MATCH_GAME_NOT_FOUND');
     }
     if (this.ticketByPlayer.has(playerId)) {
+      const existing = this.ticketByPlayer.get(playerId);
+      span.addEvent('ticket_reused', { ticketId: existing.id });
+      span.end({ statusCode: 'OK' });
       return this.ticketByPlayer.get(playerId);
     }
     const existingRoom = roomManager.getRoomForPlayer(playerId);
     if (existingRoom && existingRoom.status !== 'finished') {
+      span.recordException(new Error('MATCH_PLAYER_IN_ROOM'));
+      span.end({ statusCode: 'ERROR', message: 'MATCH_PLAYER_IN_ROOM' });
       throw createError('MATCH_PLAYER_IN_ROOM', { meta: { roomId: existingRoom.id } });
     }
 
@@ -35,12 +44,14 @@ class MatchmakingService extends EventEmitter {
     };
     this.ticketById.set(ticket.id, ticket);
     this.ticketByPlayer.set(playerId, ticket);
+    span.addEvent('ticket_created', { ticketId: ticket.id });
 
     const queue = this.waitingQueues.get(gameId) || [];
     queue.push(ticket);
     this.waitingQueues.set(gameId, queue);
 
     this.match(gameId, game);
+    span.end({ statusCode: 'OK' });
     return ticket;
   }
 
@@ -59,8 +70,11 @@ class MatchmakingService extends EventEmitter {
         ticket.roomId = room.id;
         ticket.matchedAt = now;
         this.ticketByPlayer.delete(ticket.playerId);
+        const waitDuration = ticket.matchedAt - ticket.createdAt;
+        observability.recordHistogram('match_wait_ms', waitDuration, { gameId });
         this.emit('matched', { ticket, room });
       });
+      room.matchWaitRecorded = true;
     }
     if (queue.length === 0) {
       this.waitingQueues.delete(gameId);

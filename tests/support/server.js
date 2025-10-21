@@ -10,6 +10,9 @@ const { roomManager } = require('../../src/services/roomService');
 const progression = require('../../src/services/progression');
 const social = require('../../src/services/socialService');
 const aiTraining = require('../../src/services/aiService');
+const observability = require('../../src/services/observability');
+const antiCheat = require('../../src/services/antiCheatService');
+const audit = require('../../src/services/auditService');
 
 function createToken(playerId) {
   return signJwt(
@@ -125,6 +128,7 @@ async function connectWebSocket({ port, token }) {
               }
             });
           });
+          socket.on('error', () => {});
           if (remaining.length > 0) {
             const messages = decodeServerFrames(bufferState, remaining);
             messages.forEach((message) => {
@@ -182,6 +186,9 @@ async function withServer(testFn) {
   progression.reset();
   social.reset();
   aiTraining.reset();
+  observability.reset();
+  antiCheat.reset();
+  audit.reset();
   const server = startServer();
   await once(server, 'listening');
   const address = server.address();

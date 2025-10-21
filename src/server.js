@@ -11,6 +11,7 @@ const { setupRealtime } = require('./realtime/gateway');
 const progression = require('./services/progression');
 const social = require('./services/socialService');
 const aiTraining = require('./services/aiService');
+const audit = require('./services/auditService');
 progression.ensureListener();
 
 function setSecurityHeaders(res) {
@@ -120,6 +121,19 @@ async function requestHandler(req, res) {
 
   if (req.method === 'GET' && url.pathname === '/healthz') {
     respondSuccess(res, { status: 'ok', env: config.env });
+    return;
+  }
+
+  if (req.method === 'GET' && /^\/internal\/replay\/[\w-]+$/.test(url.pathname)) {
+    const [, , , replayId] = url.pathname.split('/');
+    const replay = audit.getReplay(replayId);
+    if (!replay) {
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: false, error: { code: 'REPLAY_NOT_FOUND', message: 'Replay not found' } }));
+      return;
+    }
+    respondSuccess(res, { replay });
     return;
   }
 
