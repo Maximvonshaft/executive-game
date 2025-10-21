@@ -1,12 +1,70 @@
 const MAX_RECENT_OPPONENTS = 20;
 
+const { readJson, writeJson, resolveDataPath } = require('../utils/persistence');
+
+const RELATIONSHIPS_FILE = resolveDataPath('social', 'relationships.json');
+
 const friendMap = new Map(); // playerId -> Set(friendId)
 const blockedMap = new Map(); // playerId -> Set(blockedId)
 const recentOpponentsMap = new Map(); // playerId -> [ { playerId, lastPlayedAt, gameId, roomId } ]
 
-function ensureSet(store, key) {
+function hydrateRelationships() {
+  const stored = readJson(RELATIONSHIPS_FILE, {
+    friends: {},
+    blocked: {},
+    recentOpponents: {}
+  });
+  if (!stored || typeof stored !== 'object') {
+    return;
+  }
+  friendMap.clear();
+  blockedMap.clear();
+  recentOpponentsMap.clear();
+  if (stored.friends && typeof stored.friends === 'object') {
+    Object.entries(stored.friends).forEach(([playerId, entries]) => {
+      if (Array.isArray(entries)) {
+        friendMap.set(playerId, new Set(entries));
+      }
+    });
+  }
+  if (stored.blocked && typeof stored.blocked === 'object') {
+    Object.entries(stored.blocked).forEach(([playerId, entries]) => {
+      if (Array.isArray(entries)) {
+        blockedMap.set(playerId, new Set(entries));
+      }
+    });
+  }
+  if (stored.recentOpponents && typeof stored.recentOpponents === 'object') {
+    Object.entries(stored.recentOpponents).forEach(([playerId, entries]) => {
+      if (Array.isArray(entries)) {
+        recentOpponentsMap.set(playerId, entries.map((entry) => ({ ...entry })));
+      }
+    });
+  }
+}
+
+function persistRelationships() {
+  const payload = {
+    friends: {},
+    blocked: {},
+    recentOpponents: {}
+  };
+  friendMap.forEach((set, playerId) => {
+    payload.friends[playerId] = Array.from(set.values());
+  });
+  blockedMap.forEach((set, playerId) => {
+    payload.blocked[playerId] = Array.from(set.values());
+  });
+  recentOpponentsMap.forEach((entries, playerId) => {
+    payload.recentOpponents[playerId] = entries.map((entry) => ({ ...entry }));
+  });
+  writeJson(RELATIONSHIPS_FILE, payload);
+}
+
+function ensureSet(store, key, options = {}) {
+  const { createIfMissing = true } = options;
   let set = store.get(key);
-  if (!set) {
+  if (!set && createIfMissing) {
     set = new Set();
     store.set(key, set);
   }
@@ -33,14 +91,27 @@ function toRecentList(list) {
   }));
 }
 
-function updateRecentOpponents(playerId, opponentId, gameId, roomId, timestamp) {
+function updateRecentOpponents(playerId, opponentId, gameId, roomId, timestamp, options = {}) {
+  const { persist = true } = options;
   if (playerId === opponentId) {
-    return;
+    return false;
   }
   const list = recentOpponentsMap.get(playerId) || [];
   const filtered = list.filter((entry) => entry.playerId !== opponentId);
-  filtered.unshift({ playerId: opponentId, gameId, roomId, lastPlayedAt: timestamp });
-  recentOpponentsMap.set(playerId, filtered.slice(0, MAX_RECENT_OPPONENTS));
+  const nextList = [
+    { playerId: opponentId, gameId, roomId, lastPlayedAt: timestamp },
+    ...filtered
+  ].slice(0, MAX_RECENT_OPPONENTS);
+  const before = JSON.stringify(list);
+  const after = JSON.stringify(nextList);
+  if (before === after) {
+    return false;
+  }
+  recentOpponentsMap.set(playerId, nextList);
+  if (persist) {
+    persistRelationships();
+  }
+  return true;
 }
 
 function recordMatch(room, timestamp = Date.now()) {
@@ -48,13 +119,18 @@ function recordMatch(room, timestamp = Date.now()) {
     return;
   }
   const playerIds = room.players.map((player) => player.id).filter(Boolean);
+  let mutated = false;
   playerIds.forEach((playerId) => {
     playerIds.forEach((opponentId) => {
       if (playerId !== opponentId) {
-        updateRecentOpponents(playerId, opponentId, room.gameId, room.id, timestamp);
+        mutated =
+          updateRecentOpponents(playerId, opponentId, room.gameId, room.id, timestamp, { persist: false }) || mutated;
       }
     });
   });
+  if (mutated) {
+    persistRelationships();
+  }
 }
 
 function addFriend(playerId, targetId) {
@@ -77,8 +153,13 @@ function addFriend(playerId, targetId) {
   }
   const sourceFriends = ensureSet(friendMap, source);
   const targetFriends = ensureSet(friendMap, target);
+  const sizeBeforeSource = sourceFriends.size;
+  const sizeBeforeTarget = targetFriends.size;
   sourceFriends.add(target);
   targetFriends.add(source);
+  if (sourceFriends.size !== sizeBeforeSource || targetFriends.size !== sizeBeforeTarget) {
+    persistRelationships();
+  }
   return { added: true };
 }
 
@@ -92,6 +173,9 @@ function removeFriend(playerId, targetId) {
   const targetFriends = ensureSet(friendMap, target);
   const hadFriend = sourceFriends.delete(target);
   targetFriends.delete(source);
+  if (hadFriend) {
+    persistRelationships();
+  }
   return { removed: hadFriend };
 }
 
@@ -102,11 +186,15 @@ function blockPlayer(playerId, targetId) {
     return { blocked: false };
   }
   const sourceBlocked = ensureSet(blockedMap, source);
+  const beforeBlocked = sourceBlocked.size;
   sourceBlocked.add(target);
   const sourceFriends = ensureSet(friendMap, source);
   const targetFriends = ensureSet(friendMap, target);
-  sourceFriends.delete(target);
-  targetFriends.delete(source);
+  const removedSource = sourceFriends.delete(target);
+  const removedTarget = targetFriends.delete(source);
+  if (sourceBlocked.size !== beforeBlocked || removedSource || removedTarget) {
+    persistRelationships();
+  }
   return { blocked: true };
 }
 
@@ -118,6 +206,9 @@ function unblockPlayer(playerId, targetId) {
   }
   const sourceBlocked = ensureSet(blockedMap, source);
   const hadBlock = sourceBlocked.delete(target);
+  if (hadBlock) {
+    persistRelationships();
+  }
   return { unblocked: hadBlock };
 }
 
@@ -126,7 +217,10 @@ function isBlockedBy(playerId, potentialBlockerId) {
   if (!blocker) {
     return false;
   }
-  const blocked = ensureSet(blockedMap, blocker);
+  const blocked = ensureSet(blockedMap, blocker, { createIfMissing: false });
+  if (!blocked) {
+    return false;
+  }
   return blocked.has(playerId);
 }
 
@@ -143,8 +237,10 @@ function getOverview(playerId) {
       recentOpponents: []
     };
   }
-  const friends = toOverviewList(ensureSet(friendMap, id));
-  const blocked = toOverviewList(ensureSet(blockedMap, id));
+  const friendsSet = ensureSet(friendMap, id, { createIfMissing: false });
+  const blockedSet = ensureSet(blockedMap, id, { createIfMissing: false });
+  const friends = toOverviewList(friendsSet || new Set());
+  const blocked = toOverviewList(blockedSet || new Set());
   const recent = toRecentList(recentOpponentsMap.get(id) || []);
   return { friends, blocked, recentOpponents: recent };
 }
@@ -153,6 +249,7 @@ function reset() {
   friendMap.clear();
   blockedMap.clear();
   recentOpponentsMap.clear();
+  persistRelationships();
 }
 
 module.exports = {
@@ -167,3 +264,5 @@ module.exports = {
   updateRecentOpponents,
   reset
 };
+
+hydrateRelationships();
