@@ -1,34 +1,6 @@
 const { addCoins, ensureProfile } = require('./playerStore');
-
-const TASK_DEFINITIONS = [
-  {
-    id: 'daily_first_win',
-    title: '每日首胜',
-    description: '赢下一场排位赛，领取额外奖励。',
-    type: 'daily',
-    goal: 1,
-    metric: 'wins',
-    reward: { coins: 40 }
-  },
-  {
-    id: 'daily_play_three',
-    title: '三局热身',
-    description: '完成 3 场任意排位赛，保持手感。',
-    type: 'daily',
-    goal: 3,
-    metric: 'matches',
-    reward: { coins: 25 }
-  },
-  {
-    id: 'daily_back_to_back',
-    title: '连胜节奏',
-    description: '达成 2 连胜，保持势头不减。',
-    type: 'daily',
-    goal: 1,
-    metric: 'streak',
-    reward: { coins: 30 }
-  }
-];
+const adminConfig = require('../adminConfigService');
+const i18n = require('../i18nService');
 
 const playerTaskState = new Map();
 
@@ -40,25 +12,38 @@ function getDateKey(timestamp = Date.now()) {
   return `${utcYear}-${String(utcMonth + 1).padStart(2, '0')}-${String(utcDate).padStart(2, '0')}`;
 }
 
+function createTaskEntry(definition, timestamp) {
+  return {
+    id: definition.id,
+    progress: 0,
+    goal: definition.goal,
+    completed: false,
+    claimed: false,
+    updatedAt: timestamp
+  };
+}
+
 function ensureTaskState(playerId, timestamp = Date.now()) {
   const key = getDateKey(timestamp);
+  const version = adminConfig.getTaskConfigVersion();
   let state = playerTaskState.get(playerId);
-  if (!state || state.date !== key) {
+  const definitions = adminConfig.getTaskDefinitions();
+  if (!state || state.date !== key || state.version !== version) {
     state = {
       date: key,
+      version,
       tasks: new Map()
     };
-    TASK_DEFINITIONS.forEach((definition) => {
-      state.tasks.set(definition.id, {
-        id: definition.id,
-        progress: 0,
-        goal: definition.goal,
-        completed: false,
-        claimed: false,
-        updatedAt: timestamp
-      });
+    definitions.forEach((definition) => {
+      state.tasks.set(definition.id, createTaskEntry(definition, timestamp));
     });
     playerTaskState.set(playerId, state);
+  } else {
+    definitions.forEach((definition) => {
+      if (!state.tasks.has(definition.id)) {
+        state.tasks.set(definition.id, createTaskEntry(definition, timestamp));
+      }
+    });
   }
   return state;
 }
@@ -102,16 +87,35 @@ function recordMatchProgress({ playerId, result, stats, timestamp }) {
   }
 }
 
-function getTasksForPlayer(playerId, timestamp = Date.now()) {
+function resolveTaskText(definition, lang) {
+  const title = i18n.translate(lang, definition.titleKey, definition.defaultTitle || definition.title || definition.id);
+  const description = i18n.translate(
+    lang,
+    definition.descriptionKey,
+    definition.defaultDescription || definition.description || ''
+  );
+  return { title, description };
+}
+
+function getTasksForPlayer(playerId, timestamp = Date.now(), options = {}) {
+  const lang = options.lang || null;
   const state = ensureTaskState(playerId, timestamp);
+  const definitions = adminConfig.getTaskDefinitions();
   const [year, month, day] = state.date.split('-').map((part) => Number.parseInt(part, 10));
   const expiry = Date.UTC(year, month - 1, day + 1) - 1;
-  return TASK_DEFINITIONS.map((definition) => {
-    const entry = state.tasks.get(definition.id);
+  return definitions.map((definition) => {
+    let entry = state.tasks.get(definition.id);
+    if (!entry) {
+      entry = createTaskEntry(definition, timestamp);
+      state.tasks.set(definition.id, entry);
+    }
+    const text = resolveTaskText(definition, lang);
     return {
       id: definition.id,
-      title: definition.title,
-      description: definition.description,
+      title: text.title,
+      titleKey: definition.titleKey || null,
+      description: text.description,
+      descriptionKey: definition.descriptionKey || null,
       type: definition.type,
       progress: entry.progress,
       goal: entry.goal,
@@ -125,7 +129,7 @@ function getTasksForPlayer(playerId, timestamp = Date.now()) {
 }
 
 function claimTask(playerId, taskId, timestamp = Date.now()) {
-  const definition = TASK_DEFINITIONS.find((task) => task.id === taskId);
+  const definition = adminConfig.findTaskDefinition(taskId);
   if (!definition) {
     const error = new Error('TASK_NOT_FOUND');
     error.code = 'TASK_NOT_FOUND';

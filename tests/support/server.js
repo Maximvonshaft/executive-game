@@ -13,6 +13,8 @@ const aiTraining = require('../../src/services/aiService');
 const observability = require('../../src/services/observability');
 const antiCheat = require('../../src/services/antiCheatService');
 const audit = require('../../src/services/auditService');
+const adminConfig = require('../../src/services/adminConfigService');
+const i18n = require('../../src/services/i18nService');
 
 function createToken(playerId) {
   return signJwt(
@@ -189,6 +191,8 @@ async function withServer(testFn) {
   observability.reset();
   antiCheat.reset();
   audit.reset();
+  adminConfig.reset();
+  i18n.reset();
   const server = startServer();
   await once(server, 'listening');
   const address = server.address();

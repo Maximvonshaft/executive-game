@@ -4,6 +4,7 @@ const { createError } = require('../errors/codes');
 const { getGameById } = require('./gameService');
 const { roomManager } = require('./roomService');
 const observability = require('./observability');
+const adminConfig = require('./adminConfigService');
 
 class MatchmakingService extends EventEmitter {
   constructor() {
@@ -20,6 +21,14 @@ class MatchmakingService extends EventEmitter {
       span.recordException(new Error('MATCH_GAME_NOT_FOUND'));
       span.end({ statusCode: 'ERROR', message: 'MATCH_GAME_NOT_FOUND' });
       throw createError('MATCH_GAME_NOT_FOUND');
+    }
+    const banEntry = adminConfig.getBanEntry(playerId);
+    if (banEntry) {
+      span.recordException(new Error('PLAYER_BANNED'));
+      span.end({ statusCode: 'ERROR', message: 'PLAYER_BANNED' });
+      throw createError('PLAYER_BANNED', {
+        meta: { reason: banEntry.reason, expiresAt: banEntry.expiresAt || null }
+      });
     }
     if (this.ticketByPlayer.has(playerId)) {
       const existing = this.ticketByPlayer.get(playerId);

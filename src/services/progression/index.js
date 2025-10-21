@@ -105,10 +105,10 @@ function getLeaderboardView(scope, limit) {
   return getLeaderboard(scope, limit);
 }
 
-function getTodayTasks(playerId) {
+function getTodayTasks(playerId, options = {}) {
   ensureListener();
   ensureProfile(playerId);
-  return tasks.getTasksForPlayer(playerId);
+  return tasks.getTasksForPlayer(playerId, Date.now(), options);
 }
 
 function claimTaskReward(playerId, taskId) {

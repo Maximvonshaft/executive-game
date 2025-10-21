@@ -7,6 +7,7 @@ const observability = require('./observability');
 const antiCheat = require('./antiCheatService');
 const audit = require('./auditService');
 const social = require('./socialService');
+const adminConfig = require('./adminConfigService');
 
 const INVITE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const DEFAULT_SPECTATOR_DELAY_MS = 1500;
@@ -133,6 +134,15 @@ function rebuildPlayers({ engine, gameId, playerIds, previousPlayers = [], times
   });
 }
 
+function ensurePlayerNotBanned(playerId) {
+  const banEntry = adminConfig.getBanEntry(playerId);
+  if (banEntry) {
+    throw createError('PLAYER_BANNED', {
+      meta: { playerId, reason: banEntry.reason, expiresAt: banEntry.expiresAt || null }
+    });
+  }
+}
+
 class RoomManager extends EventEmitter {
   constructor() {
     super();
@@ -164,6 +174,7 @@ class RoomManager extends EventEmitter {
     if (uniquePlayers.length === 0) {
       throw new Error('ROOM_REQUIRES_PLAYER');
     }
+    uniquePlayers.forEach((playerId) => ensurePlayerNotBanned(playerId));
     const id = randomUUID();
     const now = Date.now();
     const players = rebuildPlayers({ engine, gameId, playerIds: uniquePlayers, timestamp: now });
@@ -270,6 +281,7 @@ class RoomManager extends EventEmitter {
     if (typeof ownerId !== 'string' || ownerId.trim() === '') {
       throw new Error('ROOM_OWNER_REQUIRED');
     }
+    ensurePlayerNotBanned(ownerId);
     const existing = this.getRoomForPlayer(ownerId);
     if (existing && existing.status !== 'finished') {
       throw createError('MATCH_PLAYER_IN_ROOM', { meta: { roomId: existing.id } });
@@ -318,6 +330,7 @@ class RoomManager extends EventEmitter {
       }
       throw createError('ROOM_NOT_FOUND');
     }
+    ensurePlayerNotBanned(playerId);
     if (room.visibility === 'private' && room.ownerId !== playerId) {
       const provided = normaliseInviteCode(inviteCode);
       if (!provided || room.inviteCode !== provided) {
@@ -334,6 +347,7 @@ class RoomManager extends EventEmitter {
     if (!room) {
       throw createError('ROOM_NOT_FOUND');
     }
+    ensurePlayerNotBanned(playerId);
     const existing = room.players.find((player) => player.id === playerId);
     if (existing) {
       existing.lastSeenAt = Date.now();
@@ -467,6 +481,7 @@ class RoomManager extends EventEmitter {
     if (room.players.some((player) => player.id === playerId)) {
       throw createError('ROOM_SPECTATOR_FORBIDDEN');
     }
+    ensurePlayerNotBanned(playerId);
     if (room.visibility === 'private' && room.ownerId !== playerId) {
       const provided = normaliseInviteCode(inviteCode);
       if (!provided || room.inviteCode !== provided) {

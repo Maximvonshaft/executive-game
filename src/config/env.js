@@ -25,6 +25,15 @@ function loadConfig() {
   const telegramBotToken = requireEnv('TELEGRAM_BOT_TOKEN');
   const port = Number(process.env.PORT || 3000);
   const loginTtl = Number(process.env.TELEGRAM_LOGIN_TTL || 60 * 60 * 24);
+  const adminKeys = (process.env.ADMIN_API_KEYS || 'dev-admin-key')
+    .split(',')
+    .map((key) => key.trim())
+    .filter((key) => key.length > 0);
+  const configuredLanguages = (process.env.I18N_LANGUAGES || '')
+    .split(',')
+    .map((lang) => lang.trim())
+    .filter((lang) => lang.length > 0);
+  const fallbackLanguage = (process.env.I18N_FALLBACK_LANGUAGE || 'zh-CN').trim();
 
   return {
     env,
@@ -42,6 +51,11 @@ function loadConfig() {
     telegram: {
       botToken: telegramBotToken,
       loginTtl
+    },
+    admin: {
+      apiKeys: adminKeys,
+      supportedLanguages: configuredLanguages,
+      fallbackLanguage: fallbackLanguage || 'zh-CN'
     }
   };
 }

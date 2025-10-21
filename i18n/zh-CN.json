@@ -1,0 +1,31 @@
+{
+  "tasks": {
+    "daily_first_win": {
+      "title": "每日首胜",
+      "description": "赢下一场排位赛，领取额外奖励。"
+    },
+    "daily_play_three": {
+      "title": "三局热身",
+      "description": "完成 3 场任意排位赛，保持手感。"
+    },
+    "daily_back_to_back": {
+      "title": "连胜节奏",
+      "description": "达成 2 连胜，保持势头不减。"
+    }
+  },
+  "banners": {
+    "launch_week": {
+      "title": "开服冲刺福利",
+      "body": "完成每日任务，领取限定头像框。"
+    }
+  },
+  "announcements": {
+    "global": {
+      "message": "欢迎来到 Practice Card Games！祝你好运。"
+    }
+  },
+  "accessibility": {
+    "highContrastHint": "在设置中开启高对比度模式以获得更清晰的棋盘。",
+    "dynamicTypeHint": "应用会根据系统字体大小自动调整布局。"
+  }
+}

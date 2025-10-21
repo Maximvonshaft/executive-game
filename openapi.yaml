@@ -1,9 +1,10 @@
 openapi: 3.0.3
 info:
   title: Practice Card Games Realtime API
-  version: 0.6.0
+  version: 0.7.0
   description: |
-    Phase 5 在社交能力基础上，引入 AI 局面建议、练习频控与提示缓存，支撑练习模式与陪练体验。
+    Phase 7 扩展了国际化、基础无障碍与运营后台能力：支持多语言资源热更新、公告与活动 Banner 管理、
+    管理端封禁/解封，以及无障碍基线配置查询。
 servers:
   - url: https://dev.api.practice-card.games
     description: 开发环境
@@ -792,6 +793,738 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/i18n:
+    get:
+      summary: 获取多语言资源
+      operationId: getTranslations
+      tags:
+        - public
+      parameters:
+        - in: query
+          name: lang
+          required: false
+          schema:
+            type: string
+          description: 逗号分隔的语言代码列表，默认返回后端配置的默认语言。
+      responses:
+        '200':
+          description: 返回多语言资源包
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      version:
+                        type: integer
+                        format: int64
+                      fallbackLanguage:
+                        type: string
+                        example: zh-CN
+                      availableLanguages:
+                        type: array
+                        items:
+                          type: string
+                      supportedLanguages:
+                        type: array
+                        items:
+                          type: string
+                      resources:
+                        type: object
+                        additionalProperties:
+                          type: object
+        '400':
+          description: 请求参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/accessibility:
+    get:
+      summary: 查询无障碍基线配置
+      operationId: getAccessibility
+      tags:
+        - public
+      responses:
+        '200':
+          description: 返回无障碍配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      accessibility:
+                        $ref: '#/components/schemas/AccessibilityConfig'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/banners:
+    get:
+      summary: 获取前台活动 Banner
+      operationId: listBanners
+      tags:
+        - public
+      parameters:
+        - in: query
+          name: lang
+          required: false
+          schema:
+            type: string
+          description: 指定优先返回的语言代码。
+      responses:
+        '200':
+          description: Banner 列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      version:
+                        type: integer
+                        format: int64
+                      banners:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PublicBanner'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/announcement:
+    get:
+      summary: 获取前台公告
+      operationId: getAnnouncement
+      tags:
+        - public
+      parameters:
+        - in: query
+          name: lang
+          required: false
+          schema:
+            type: string
+          description: 指定公告内容的优先语言。
+      responses:
+        '200':
+          description: 公告内容
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      version:
+                        type: integer
+                        format: int64
+                      announcement:
+                        $ref: '#/components/schemas/PublicAnnouncement'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/tasks:
+    get:
+      summary: 查询任务配置
+      operationId: adminListTasks
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      responses:
+        '200':
+          description: 返回当前任务配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      tasks:
+                        $ref: '#/components/schemas/AdminTaskConfig'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 覆盖任务配置
+      operationId: adminUpdateTasks
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - definitions
+              properties:
+                definitions:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AdminTaskDefinition'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      tasks:
+                        $ref: '#/components/schemas/AdminTaskConfig'
+        '400':
+          description: 配置格式错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/banners:
+    get:
+      summary: 查询 Banner 配置
+      operationId: adminListBanners
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      responses:
+        '200':
+          description: 返回 Banner 配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      banners:
+                        $ref: '#/components/schemas/AdminBannerConfig'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 更新 Banner 配置
+      operationId: adminUpdateBanners
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - banners
+              properties:
+                banners:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AdminBannerDefinition'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      banners:
+                        $ref: '#/components/schemas/AdminBannerConfig'
+        '400':
+          description: 配置格式错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/announcement:
+    get:
+      summary: 查询公告配置
+      operationId: adminGetAnnouncement
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      responses:
+        '200':
+          description: 返回公告配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      announcement:
+                        $ref: '#/components/schemas/AdminAnnouncementConfig'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 更新公告配置
+      operationId: adminUpdateAnnouncement
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminAnnouncementInput'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      announcement:
+                        $ref: '#/components/schemas/AdminAnnouncementConfig'
+        '400':
+          description: 配置格式错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/accessibility:
+    get:
+      summary: 查询无障碍配置
+      operationId: adminGetAccessibility
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      responses:
+        '200':
+          description: 返回无障碍配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      accessibility:
+                        $ref: '#/components/schemas/AccessibilityConfig'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 更新无障碍配置
+      operationId: adminUpdateAccessibility
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                minimumContrastRatio:
+                  type: number
+                supportsHighContrastMode:
+                  type: boolean
+                dynamicTextScale:
+                  type: boolean
+                prefersReducedMotion:
+                  type: boolean
+                supportsRTL:
+                  type: boolean
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      accessibility:
+                        $ref: '#/components/schemas/AccessibilityConfig'
+        '400':
+          description: 配置格式错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/bans:
+    get:
+      summary: 查询封禁列表
+      operationId: adminListBans
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      responses:
+        '200':
+          description: 返回封禁列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      banned:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AdminBanEntry'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 封禁或解封玩家
+      operationId: adminUpdateBan
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - playerId
+              properties:
+                playerId:
+                  type: string
+                action:
+                  type: string
+                  enum:
+                    - ban
+                    - unban
+                  default: ban
+                reason:
+                  type: string
+                expiresAt:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: 操作结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      result:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                          playerId:
+                            type: string
+                          reason:
+                            type: string
+                          expiresAt:
+                            type: integer
+                            format: int64
+                      banned:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AdminBanEntry'
+        '400':
+          description: 配置格式错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /admin/i18n:
+    get:
+      summary: 查询或导出多语言资源
+      operationId: adminGetTranslations
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      parameters:
+        - in: query
+          name: lang
+          required: false
+          schema:
+            type: string
+          description: 指定返回的语言，未指定时返回语言列表。
+      responses:
+        '200':
+          description: 多语言配置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      version:
+                        type: integer
+                        format: int64
+                      languages:
+                        type: array
+                        items:
+                          type: string
+                        description: 当未指定语言时返回所有可用语言。
+                      resources:
+                        type: object
+                        description: 当指定语言时返回对应资源。
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: 导入或覆盖多语言资源
+      operationId: adminImportTranslations
+      tags:
+        - admin
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lang
+                - resources
+              properties:
+                lang:
+                  type: string
+                resources:
+                  type: object
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      version:
+                        type: integer
+                        format: int64
+                      language:
+                        type: string
+                      resources:
+                        type: object
+        '400':
+          description: 请求格式错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 管理凭证缺失
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: 管理凭证无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ErrorResponse:
@@ -1547,8 +2280,252 @@ components:
               enum:
                 - black
                 - white
+    AccessibilityConfig:
+      type: object
+      properties:
+        version:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        settings:
+          type: object
+          properties:
+            minimumContrastRatio:
+              type: number
+              example: 4.5
+            supportsHighContrastMode:
+              type: boolean
+            dynamicTextScale:
+              type: boolean
+            prefersReducedMotion:
+              type: boolean
+            supportsRTL:
+              type: boolean
+    PublicBanner:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        titleKey:
+          type: string
+          nullable: true
+        body:
+          type: string
+        bodyKey:
+          type: string
+          nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+        actionUrl:
+          type: string
+          nullable: true
+        weight:
+          type: integer
+        activeFrom:
+          type: integer
+          format: int64
+          nullable: true
+        activeTo:
+          type: integer
+          format: int64
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+    PublicAnnouncement:
+      type: object
+      nullable: true
+      properties:
+        id:
+          type: string
+        level:
+          type: string
+          example: info
+        message:
+          type: string
+        messageKey:
+          type: string
+          nullable: true
+        defaultMessage:
+          type: string
+        activeFrom:
+          type: integer
+          format: int64
+          nullable: true
+        activeTo:
+          type: integer
+          format: int64
+          nullable: true
+    AdminTaskDefinition:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        goal:
+          type: integer
+        metric:
+          type: string
+        reward:
+          type: object
+          additionalProperties:
+            type: number
+        titleKey:
+          type: string
+          nullable: true
+        descriptionKey:
+          type: string
+          nullable: true
+        defaultTitle:
+          type: string
+          nullable: true
+        defaultDescription:
+          type: string
+          nullable: true
+    AdminTaskConfig:
+      type: object
+      properties:
+        version:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        definitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminTaskDefinition'
+    AdminBannerDefinition:
+      type: object
+      properties:
+        id:
+          type: string
+        active:
+          type: boolean
+        weight:
+          type: integer
+        titleKey:
+          type: string
+          nullable: true
+        bodyKey:
+          type: string
+          nullable: true
+        defaultTitle:
+          type: string
+          nullable: true
+        defaultBody:
+          type: string
+          nullable: true
+        imageUrl:
+          type: string
+          nullable: true
+        actionUrl:
+          type: string
+          nullable: true
+        activeFrom:
+          type: string
+          format: date-time
+          nullable: true
+        activeTo:
+          type: string
+          format: date-time
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+    AdminBannerConfig:
+      type: object
+      properties:
+        version:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminBannerDefinition'
+    AdminAnnouncement:
+      type: object
+      properties:
+        id:
+          type: string
+        level:
+          type: string
+        messageKey:
+          type: string
+          nullable: true
+        defaultMessage:
+          type: string
+        active:
+          type: boolean
+        activeFrom:
+          type: string
+          format: date-time
+          nullable: true
+        activeTo:
+          type: string
+          format: date-time
+          nullable: true
+    AdminAnnouncementConfig:
+      type: object
+      properties:
+        version:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        announcement:
+          $ref: '#/components/schemas/AdminAnnouncement'
+    AdminAnnouncementInput:
+      type: object
+      properties:
+        id:
+          type: string
+        level:
+          type: string
+        messageKey:
+          type: string
+        defaultMessage:
+          type: string
+        active:
+          type: boolean
+        activeFrom:
+          type: string
+          format: date-time
+        activeTo:
+          type: string
+          format: date-time
+    AdminBanEntry:
+      type: object
+      properties:
+        playerId:
+          type: string
+        reason:
+          type: string
+        bannedAt:
+          type: integer
+          format: int64
+        expiresAt:
+          type: integer
+          format: int64
+          nullable: true
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    adminKey:
+      type: apiKey
+      in: header
+      name: X-Admin-Key
