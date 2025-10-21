@@ -1,6 +1,6 @@
-# Practice Card Games — Phase 4 Social Slice
+# Practice Card Games — Phase 5 Training Slice
 
-本仓库在 Phase 0～3 的登录、安全、多玩法实时对战与留存能力基线上，进一步交付 Phase 4 所需的私密房、观战与好友社交能力。
+本仓库在 Phase 0～4 的登录、安全、多玩法实时对战、留存与社交能力基线上，进一步交付 Phase 5 所需的 AI 陪练与练习模式能力。
 
 ## 功能概览
 - **Telegram 登录校验**：验证 `initData` HMAC，生成 HS256 JWT 会话令牌。
@@ -12,6 +12,7 @@
 - **资料卡与历史战绩**：`/api/profile/:id` 返回评分详情、连胜纪录、最近 15 场战绩及成就徽章，并生成分享卡片文案。
 - **每日任务与奖励**：`/api/tasks/today` 汇总每日目标，胜利、连胜、对局参与均可推进；`/api/tasks/:id/claim` 发放金币奖励。
 - **私密房 / 观战 / 好友**：`/api/rooms` + `POST /api/rooms` 支持创建带邀请码的私密房、房主踢人与观战配置，WebSocket 新增 `watch_room` 与观战限速；`/api/friends` 维护好友、屏蔽与最近对手。
+- **AI 陪练与局面建议**：`POST /api/ai/suggest` 基于启发式分析输出候选落点、即时威胁与解说文案，支持同构局面缓存与频率限制，练习模式与排位进度隔离。
 - **文档交付**：`openapi.yaml`、`docs/ws-contract.md`、`docs/engine-gomoku.md`、`docs/error-codes.md` 等随 Phase 3 更新。
 
 ## 快速开始
@@ -78,3 +79,4 @@
 - Phase 2：已接入斗地主、德州扑克、中国象棋与国际象棋骨架。
 - Phase 3：已交付排行榜、Glicko2 段位、任务系统与资料卡。
 - Phase 4：新增私密房、观战限速、好友/屏蔽与最近对手列表。
+- Phase 5：引入 AI 局面建议、练习频控与提示缓存能力。

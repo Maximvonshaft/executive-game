@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Practice Card Games Realtime API
-  version: 0.5.0
+  version: 0.6.0
   description: |
-    Phase 4 在排行榜与任务体系之上，引入私密房、观战与好友/屏蔽能力，强化社交体验。
+    Phase 5 在社交能力基础上，引入 AI 局面建议、练习频控与提示缓存，支撑练习模式与陪练体验。
 servers:
   - url: https://dev.api.practice-card.games
     description: 开发环境
@@ -705,6 +705,59 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/ai/suggest:
+    post:
+      summary: 请求 AI 落子建议
+      operationId: requestAiSuggestion
+      tags:
+        - ai
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AiSuggestionRequest'
+      responses:
+        '200':
+          description: 返回启发式分析建议
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      suggestion:
+                        $ref: '#/components/schemas/AiSuggestion'
+        '400':
+          description: 请求参数错误或局面非法
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: 请求过于频繁
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ErrorResponse:
@@ -1159,6 +1212,241 @@ components:
           type: object
           additionalProperties:
             type: integer
+    BoardPosition:
+      type: object
+      properties:
+        x:
+          type: integer
+          minimum: 0
+        y:
+          type: integer
+          minimum: 0
+      required:
+        - x
+        - y
+    AiMoveInput:
+      type: object
+      description: 练习局面传入的历史落子，`player` 与 `playerIndex` 任选其一。
+      properties:
+        x:
+          type: integer
+          minimum: 0
+          maximum: 14
+        y:
+          type: integer
+          minimum: 0
+          maximum: 14
+        player:
+          type: string
+          nullable: true
+          enum:
+            - black
+            - white
+        playerIndex:
+          type: integer
+          nullable: true
+          enum:
+            - 0
+            - 1
+      required:
+        - x
+        - y
+    AiRecordedMove:
+      type: object
+      properties:
+        x:
+          type: integer
+        y:
+          type: integer
+        player:
+          type: string
+          enum:
+            - black
+            - white
+      required:
+        - x
+        - y
+        - player
+    AiPosition:
+      type: object
+      properties:
+        board:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+              nullable: true
+              enum:
+                - black
+                - white
+        moves:
+          type: array
+          items:
+            $ref: '#/components/schemas/AiRecordedMove'
+      required:
+        - board
+        - moves
+    AiPreview:
+      type: object
+      nullable: true
+      properties:
+        type:
+          type: string
+          enum:
+            - win_path
+            - block
+        winningLine:
+          type: array
+          items:
+            $ref: '#/components/schemas/BoardPosition'
+        threat:
+          type: object
+          nullable: true
+          properties:
+            coordinate:
+              type: string
+            position:
+              $ref: '#/components/schemas/BoardPosition'
+            winningLine:
+              type: array
+              items:
+                $ref: '#/components/schemas/BoardPosition'
+    AiEvaluation:
+      type: object
+      properties:
+        stance:
+          type: string
+          enum:
+            - advantage
+            - balanced
+            - danger
+            - finished
+        longestLine:
+          type: object
+          properties:
+            self:
+              type: integer
+            opponent:
+              type: integer
+        opponentThreats:
+          type: array
+          items:
+            type: object
+            properties:
+              coordinate:
+                type: string
+              position:
+                $ref: '#/components/schemas/BoardPosition'
+        summary:
+          type: string
+    AiRecommendedMove:
+      type: object
+      properties:
+        position:
+          $ref: '#/components/schemas/BoardPosition'
+        coordinate:
+          type: string
+          example: H7
+        score:
+          type: number
+        categories:
+          type: array
+          items:
+            type: string
+        metrics:
+          type: object
+          properties:
+            longestLine:
+              type: integer
+            openEnds:
+              type: integer
+        preview:
+          $ref: '#/components/schemas/AiPreview'
+        explanation:
+          type: string
+      required:
+        - position
+        - coordinate
+        - score
+        - categories
+        - metrics
+        - explanation
+    AiSuggestion:
+      type: object
+      properties:
+        gameId:
+          type: string
+        mode:
+          type: string
+          example: practice
+        cached:
+          type: boolean
+        generatedAt:
+          type: integer
+          format: int64
+        nextPlayer:
+          type: string
+          enum:
+            - black
+            - white
+        position:
+          $ref: '#/components/schemas/AiPosition'
+        evaluation:
+          $ref: '#/components/schemas/AiEvaluation'
+        recommendedMoves:
+          type: array
+          items:
+            $ref: '#/components/schemas/AiRecommendedMove'
+      required:
+        - gameId
+        - mode
+        - cached
+        - generatedAt
+        - nextPlayer
+        - position
+        - evaluation
+        - recommendedMoves
+    AiSuggestionRequest:
+      type: object
+      properties:
+        gameId:
+          type: string
+          default: gomoku
+        moves:
+          type: array
+          items:
+            $ref: '#/components/schemas/AiMoveInput'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 5
+        mode:
+          type: string
+          enum:
+            - practice
+            - analysis
+            - review
+        nextPlayer:
+          type: string
+          nullable: true
+          enum:
+            - black
+            - white
+        position:
+          type: object
+          nullable: true
+          properties:
+            moves:
+              type: array
+              items:
+                $ref: '#/components/schemas/AiMoveInput'
+            nextPlayer:
+              type: string
+              nullable: true
+              enum:
+                - black
+                - white
   securitySchemes:
     bearerAuth:
       type: http
