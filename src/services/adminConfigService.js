@@ -1,4 +1,5 @@
 const { translate } = require('./i18nService');
+const { readJson, writeJson, resolveDataPath } = require('../utils/persistence');
 
 const DEFAULT_TASK_DEFINITIONS = [
   {
@@ -67,6 +68,8 @@ const DEFAULT_ACCESSIBILITY = {
   supportsRTL: true
 };
 
+const ADMIN_CONFIG_FILE = resolveDataPath('admin', 'config.json');
+
 let taskConfig = {
   version: Date.now(),
   updatedAt: Date.now(),
@@ -95,6 +98,76 @@ const bannedPlayers = new Map();
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function hydrateAdminConfig() {
+  const stored = readJson(ADMIN_CONFIG_FILE, null);
+  if (!stored || typeof stored !== 'object') {
+    return;
+  }
+  if (stored.taskConfig && Array.isArray(stored.taskConfig.definitions)) {
+    taskConfig = {
+      version: stored.taskConfig.version || Date.now(),
+      updatedAt: stored.taskConfig.updatedAt || Date.now(),
+      definitions: stored.taskConfig.definitions.map((definition) => ({ ...definition }))
+    };
+  }
+  if (stored.bannerConfig && Array.isArray(stored.bannerConfig.items)) {
+    bannerConfig = {
+      version: stored.bannerConfig.version || Date.now(),
+      updatedAt: stored.bannerConfig.updatedAt || Date.now(),
+      items: stored.bannerConfig.items.map((item) => ({ ...item }))
+    };
+  }
+  if (stored.announcementConfig && stored.announcementConfig.announcement) {
+    announcementConfig = {
+      version: stored.announcementConfig.version || Date.now(),
+      updatedAt: stored.announcementConfig.updatedAt || Date.now(),
+      announcement: { ...stored.announcementConfig.announcement }
+    };
+  }
+  if (stored.accessibilityConfig && stored.accessibilityConfig.settings) {
+    accessibilityConfig = {
+      version: stored.accessibilityConfig.version || Date.now(),
+      updatedAt: stored.accessibilityConfig.updatedAt || Date.now(),
+      settings: { ...stored.accessibilityConfig.settings }
+    };
+  }
+  bannedPlayers.clear();
+  if (Array.isArray(stored.bannedPlayers)) {
+    stored.bannedPlayers.forEach((entry) => {
+      if (entry && typeof entry.playerId === 'string') {
+        bannedPlayers.set(entry.playerId, { ...entry });
+      }
+    });
+  }
+}
+
+function persistAdminConfig() {
+  const payload = {
+    taskConfig: {
+      version: taskConfig.version,
+      updatedAt: taskConfig.updatedAt,
+      definitions: taskConfig.definitions.map((definition) => ({ ...definition }))
+    },
+    bannerConfig: {
+      version: bannerConfig.version,
+      updatedAt: bannerConfig.updatedAt,
+      items: bannerConfig.items.map((item) => ({ ...item }))
+    },
+    announcementConfig: {
+      version: announcementConfig.version,
+      updatedAt: announcementConfig.updatedAt,
+      announcement: { ...announcementConfig.announcement }
+    },
+    accessibilityConfig: {
+      version: accessibilityConfig.version,
+      updatedAt: accessibilityConfig.updatedAt,
+      settings: { ...accessibilityConfig.settings }
+    },
+    bannedPlayers: Array.from(bannedPlayers.values()).map((entry) => ({ ...entry }))
+  };
+  writeJson(ADMIN_CONFIG_FILE, payload);
 }
 
 function raise(code, meta) {
@@ -156,6 +229,7 @@ function setTaskDefinitions(definitions) {
     definitions: normalised
   };
   bumpConfig(taskConfig);
+  persistAdminConfig();
 }
 
 function getTaskDefinitions() {
@@ -223,6 +297,7 @@ function setBanners(banners) {
     items: normalised
   };
   bumpConfig(bannerConfig);
+  persistAdminConfig();
 }
 
 function getBanners() {
@@ -298,6 +373,7 @@ function updateAnnouncement(update) {
     announcement
   };
   bumpConfig(announcementConfig);
+  persistAdminConfig();
 }
 
 function getAnnouncement() {
@@ -370,6 +446,7 @@ function updateAccessibilitySettings(settings) {
     settings: next
   };
   bumpConfig(accessibilityConfig);
+  persistAdminConfig();
 }
 
 function getBanEntry(playerId) {
@@ -383,6 +460,7 @@ function getBanEntry(playerId) {
   }
   if (entry.expiresAt && entry.expiresAt < Date.now()) {
     bannedPlayers.delete(id);
+    persistAdminConfig();
     return null;
   }
   return entry;
@@ -402,6 +480,7 @@ function banPlayer(playerId, options = {}) {
     expiresAt: Number.isFinite(expiresAt) ? expiresAt : null
   };
   bannedPlayers.set(id, entry);
+  persistAdminConfig();
   return clone(entry);
 }
 
@@ -411,6 +490,9 @@ function unbanPlayer(playerId) {
     raise('ADMIN_PLAYER_REQUIRED');
   }
   const existed = bannedPlayers.delete(id);
+  if (existed) {
+    persistAdminConfig();
+  }
   return existed;
 }
 
@@ -440,6 +522,7 @@ function reset() {
     settings: DEFAULT_ACCESSIBILITY
   };
   bannedPlayers.clear();
+  persistAdminConfig();
 }
 
 module.exports = {
@@ -462,3 +545,5 @@ module.exports = {
   getBanEntry,
   reset
 };
+
+hydrateAdminConfig();

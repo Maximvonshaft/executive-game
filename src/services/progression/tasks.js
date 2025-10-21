@@ -1,8 +1,53 @@
 const { addCoins, ensureProfile } = require('./playerStore');
 const adminConfig = require('../adminConfigService');
 const i18n = require('../i18nService');
+const { readJson, writeJson, resolveDataPath } = require('../../utils/persistence');
 
 const playerTaskState = new Map();
+
+const TASK_STATE_FILE = resolveDataPath('progression', 'task-state.json');
+
+function hydrateTaskState() {
+  const stored = readJson(TASK_STATE_FILE, { players: {} });
+  if (!stored || typeof stored.players !== 'object' || stored.players === null) {
+    return;
+  }
+  playerTaskState.clear();
+  Object.entries(stored.players).forEach(([playerId, snapshot]) => {
+    if (!snapshot || typeof snapshot !== 'object') {
+      return;
+    }
+    const tasks = new Map();
+    if (snapshot.tasks && typeof snapshot.tasks === 'object') {
+      Object.entries(snapshot.tasks).forEach(([taskId, entry]) => {
+        if (entry && typeof entry === 'object') {
+          tasks.set(taskId, { ...entry });
+        }
+      });
+    }
+    playerTaskState.set(playerId, {
+      date: snapshot.date,
+      version: snapshot.version,
+      tasks
+    });
+  });
+}
+
+function persistTaskState() {
+  const payload = { players: {} };
+  playerTaskState.forEach((state, playerId) => {
+    const tasks = {};
+    state.tasks.forEach((entry, taskId) => {
+      tasks[taskId] = { ...entry };
+    });
+    payload.players[playerId] = {
+      date: state.date,
+      version: state.version,
+      tasks
+    };
+  });
+  writeJson(TASK_STATE_FILE, payload);
+}
 
 function getDateKey(timestamp = Date.now()) {
   const date = new Date(timestamp);
@@ -28,6 +73,7 @@ function ensureTaskState(playerId, timestamp = Date.now()) {
   const version = adminConfig.getTaskConfigVersion();
   let state = playerTaskState.get(playerId);
   const definitions = adminConfig.getTaskDefinitions();
+  let mutated = false;
   if (!state || state.date !== key || state.version !== version) {
     state = {
       date: key,
@@ -38,52 +84,69 @@ function ensureTaskState(playerId, timestamp = Date.now()) {
       state.tasks.set(definition.id, createTaskEntry(definition, timestamp));
     });
     playerTaskState.set(playerId, state);
+    mutated = true;
   } else {
     definitions.forEach((definition) => {
       if (!state.tasks.has(definition.id)) {
         state.tasks.set(definition.id, createTaskEntry(definition, timestamp));
+        mutated = true;
       }
     });
+  }
+  if (mutated) {
+    persistTaskState();
   }
   return state;
 }
 
 function updateTaskProgress(entry, amount) {
-  if (entry.completed) {
-    return;
+  if (entry.completed || amount <= 0) {
+    return false;
   }
-  entry.progress = Math.min(entry.goal, entry.progress + amount);
+  const previous = entry.progress;
+  const next = Math.min(entry.goal, entry.progress + amount);
+  if (next === previous) {
+    return false;
+  }
+  entry.progress = next;
   entry.updatedAt = Date.now();
   if (entry.progress >= entry.goal) {
     entry.completed = true;
   }
+  return true;
 }
 
 function fulfillTask(entry) {
+  const wasCompleted = entry.completed;
   if (!entry.completed) {
     entry.completed = true;
     entry.progress = entry.goal;
   }
   entry.updatedAt = Date.now();
+  return !wasCompleted;
 }
 
 function recordMatchProgress({ playerId, result, stats, timestamp }) {
   const state = ensureTaskState(playerId, timestamp);
   const matchesTask = state.tasks.get('daily_play_three');
+  let mutated = false;
   if (matchesTask) {
-    updateTaskProgress(matchesTask, 1);
+    mutated = updateTaskProgress(matchesTask, 1) || mutated;
   }
   if (result === 'win') {
     const winTask = state.tasks.get('daily_first_win');
     if (winTask) {
-      updateTaskProgress(winTask, 1);
+      mutated = updateTaskProgress(winTask, 1) || mutated;
     }
   }
   if (stats.winStreak >= 2) {
     const streakTask = state.tasks.get('daily_back_to_back');
     if (streakTask) {
-      fulfillTask(streakTask);
+      mutated = fulfillTask(streakTask) || mutated;
     }
+  }
+  if (mutated) {
+    persistTaskState();
   }
 }
 
@@ -158,6 +221,7 @@ function claimTask(playerId, taskId, timestamp = Date.now()) {
     addCoins(playerId, definition.reward.coins);
   }
   ensureProfile(playerId);
+  persistTaskState();
   return {
     taskId,
     reward: definition.reward
@@ -166,6 +230,7 @@ function claimTask(playerId, taskId, timestamp = Date.now()) {
 
 function reset() {
   playerTaskState.clear();
+  persistTaskState();
 }
 
 module.exports = {
@@ -174,3 +239,5 @@ module.exports = {
   claimTask,
   reset
 };
+
+hydrateTaskState();

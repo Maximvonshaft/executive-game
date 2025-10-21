@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const RESOURCES_DIR = path.join(__dirname, '..', '..', 'i18n');
+const RESOURCES_DIR = process.env.I18N_RESOURCES_DIR
+  ? path.resolve(process.env.I18N_RESOURCES_DIR)
+  : path.join(__dirname, '..', '..', 'i18n');
 
 let fallbackLanguage = 'zh-CN';
 let resources = new Map();
@@ -45,6 +47,20 @@ function loadLanguageFile(filePath) {
     return JSON.parse(raw);
   } catch (error) {
     return {};
+  }
+}
+
+function writeLanguageFile(lang, data) {
+  ensureResourcesDir();
+  const filePath = path.join(RESOURCES_DIR, `${lang}.json`);
+  const payload = JSON.stringify(data, null, 2);
+  const tempFile = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempFile, payload, 'utf8');
+  try {
+    fs.renameSync(tempFile, filePath);
+  } catch (error) {
+    fs.rmSync(tempFile, { force: true });
+    throw error;
   }
 }
 
@@ -152,7 +168,9 @@ function updateResources(lang, data) {
   if (!data || typeof data !== 'object') {
     raise('I18N_PAYLOAD_INVALID');
   }
-  resources.set(normalised, clone(data));
+  const snapshot = clone(data);
+  resources.set(normalised, snapshot);
+  writeLanguageFile(normalised, snapshot);
   bumpVersion();
   if (!resources.has(fallbackLanguage)) {
     fallbackLanguage = normalised;

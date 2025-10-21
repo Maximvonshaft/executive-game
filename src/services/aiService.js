@@ -19,6 +19,9 @@ const RATE_LIMIT_WINDOW_MS = 30_000;
 const RATE_LIMIT_MAX_REQUESTS = 3;
 const MAX_SUGGESTIONS = 5;
 
+const MAX_CACHE_ENTRIES = Math.max(10, Number.parseInt(process.env.AI_CACHE_MAX_ENTRIES || '500', 10) || 500);
+const CACHE_TTL_MS = Math.max(1, Number.parseInt(process.env.AI_CACHE_TTL_MS || String(10 * 60 * 1000), 10) || 10 * 60 * 1000);
+
 const cache = new Map();
 const rateLimiter = new Map();
 
@@ -45,6 +48,40 @@ function encodeBoard(board) {
 function makeCacheKey({ gameId, state }) {
   const boardKey = encodeBoard(state.board);
   return `${gameId}|${state.nextPlayerIndex}|${boardKey}`;
+}
+
+function evictCache(now = Date.now()) {
+  for (const [key, entry] of cache) {
+    if (now - entry.storedAt > CACHE_TTL_MS || cache.size > MAX_CACHE_ENTRIES) {
+      cache.delete(key);
+      continue;
+    }
+    if (cache.size <= MAX_CACHE_ENTRIES && now - entry.storedAt <= CACHE_TTL_MS) {
+      break;
+    }
+  }
+}
+
+function getCacheEntry(cacheKey, now) {
+  const entry = cache.get(cacheKey);
+  if (!entry) {
+    return null;
+  }
+  if (now - entry.storedAt > CACHE_TTL_MS) {
+    cache.delete(cacheKey);
+    return null;
+  }
+  cache.delete(cacheKey);
+  cache.set(cacheKey, entry);
+  return clone(entry.value);
+}
+
+function setCacheEntry(cacheKey, suggestion, now) {
+  cache.set(cacheKey, {
+    value: clone(suggestion),
+    storedAt: now
+  });
+  evictCache(now);
 }
 
 function coordinateLabel(x, y) {
@@ -390,7 +427,7 @@ function getSuggestions({ playerId, gameId, moves, nextPlayer, limit = 3, mode =
       recommendedMoves: []
     };
     const cacheKey = makeCacheKey({ gameId, state });
-    cache.set(cacheKey, clone(suggestion));
+    setCacheEntry(cacheKey, suggestion, now);
     return suggestion;
   }
   if (nextPlayer) {
@@ -401,8 +438,9 @@ function getSuggestions({ playerId, gameId, moves, nextPlayer, limit = 3, mode =
   }
   const cappedLimit = Math.max(1, Math.min(MAX_SUGGESTIONS, Number.isFinite(limit) ? Math.floor(limit) : 3));
   const cacheKey = makeCacheKey({ gameId, state });
-  if (cache.has(cacheKey)) {
-    const cached = clone(cache.get(cacheKey));
+  const cachedEntry = getCacheEntry(cacheKey, now);
+  if (cachedEntry) {
+    const cached = cachedEntry;
     cached.recommendedMoves = cached.recommendedMoves.slice(0, cappedLimit);
     cached.cached = true;
     return cached;
@@ -444,7 +482,7 @@ function getSuggestions({ playerId, gameId, moves, nextPlayer, limit = 3, mode =
     evaluation: summarizeEvaluation(state, state.nextPlayerIndex, threats),
     recommendedMoves: topMoves
   };
-  cache.set(cacheKey, clone(baseSuggestion));
+  setCacheEntry(cacheKey, baseSuggestion, now);
   return {
     ...baseSuggestion,
     recommendedMoves: topMoves.slice(0, cappedLimit)
@@ -456,7 +494,16 @@ function reset() {
   rateLimiter.clear();
 }
 
+function getCacheStats() {
+  return {
+    size: cache.size,
+    maxEntries: MAX_CACHE_ENTRIES,
+    ttlMs: CACHE_TTL_MS
+  };
+}
+
 module.exports = {
   getSuggestions,
-  reset
+  reset,
+  getCacheStats
 };

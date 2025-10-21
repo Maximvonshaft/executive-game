@@ -3,6 +3,7 @@ const {
   updateRating,
   deriveTier
 } = require('./rating');
+const { readJson, writeJson, resolveDataPath } = require('../../utils/persistence');
 
 const HISTORY_LIMIT = 30;
 
@@ -10,7 +11,29 @@ function now() {
   return Date.now();
 }
 
+const PROFILES_FILE = resolveDataPath('progression', 'profiles.json');
+
 const profiles = new Map();
+
+function hydrateProfiles() {
+  const stored = readJson(PROFILES_FILE, { profiles: [] });
+  if (!stored || !Array.isArray(stored.profiles)) {
+    return;
+  }
+  profiles.clear();
+  stored.profiles.forEach((entry) => {
+    if (entry && typeof entry.id === 'string' && entry.id.trim() !== '') {
+      profiles.set(entry.id, { ...entry });
+    }
+  });
+}
+
+function persistProfiles() {
+  const payload = {
+    profiles: Array.from(profiles.values())
+  };
+  writeJson(PROFILES_FILE, payload);
+}
 
 function ensureProfile(playerId) {
   let profile = profiles.get(playerId);
@@ -42,6 +65,7 @@ function ensureProfile(playerId) {
       }
     };
     profiles.set(playerId, profile);
+    persistProfiles();
   }
   return profile;
 }
@@ -211,6 +235,8 @@ function processMatchResult({ room, outcomes, timestamp }) {
     });
   });
 
+  persistProfiles();
+
   return changes;
 }
 
@@ -264,11 +290,13 @@ function getAllProfiles() {
 function addCoins(playerId, amount) {
   const profile = ensureProfile(playerId);
   profile.currencies.coins += amount;
+  persistProfiles();
   return profile.currencies.coins;
 }
 
 function reset() {
   profiles.clear();
+  persistProfiles();
 }
 
 module.exports = {
@@ -279,3 +307,5 @@ module.exports = {
   addCoins,
   reset
 };
+
+hydrateProfiles();
