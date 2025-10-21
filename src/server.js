@@ -1,5 +1,7 @@
 const http = require('http');
 const { URL } = require('url');
+const path = require('path');
+const fs = require('fs');
 const { config } = require('./config/env');
 const { ApplicationError, ERROR_CODES, createError } = require('./errors/codes');
 const { authenticateWithTelegram } = require('./services/authService');
@@ -18,6 +20,78 @@ const { authenticateAdminRequest } = require('./utils/adminAuth');
 progression.ensureListener();
 if (config.admin && typeof config.admin.fallbackLanguage === 'string') {
   i18n.setFallbackLanguage(config.admin.fallbackLanguage);
+}
+
+const STATIC_ROOT = path.join(__dirname, '..', 'public');
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp'
+};
+
+async function tryServeStatic(req, res, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return false;
+  }
+  if (url.pathname === '/') {
+    res.statusCode = 302;
+    res.setHeader('Location', '/app');
+    res.end();
+    return true;
+  }
+  if (!url.pathname.startsWith('/app')) {
+    return false;
+  }
+  let relative = url.pathname.slice('/app'.length);
+  if (!relative || relative === '/') {
+    relative = '/index.html';
+  }
+  const resolved = path.join(STATIC_ROOT, relative);
+  if (!resolved.startsWith(STATIC_ROOT)) {
+    res.statusCode = 403;
+    res.end('Forbidden');
+    return true;
+  }
+  try {
+    const stat = await fs.promises.stat(resolved);
+    if (stat.isDirectory()) {
+      res.statusCode = 301;
+      res.setHeader('Location', `${url.pathname}/`);
+      res.end();
+      return true;
+    }
+    const ext = path.extname(resolved).toLowerCase();
+    const type = MIME_TYPES[ext] || 'application/octet-stream';
+    res.statusCode = 200;
+    res.setHeader('Content-Type', type);
+    if (req.method === 'HEAD') {
+      res.end();
+    } else {
+      const stream = fs.createReadStream(resolved);
+      stream.on('error', (error) => {
+        console.error('static stream error', error);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.end('Internal Error');
+        }
+      });
+      stream.pipe(res);
+    }
+    return true;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      res.statusCode = 404;
+      res.end('Not Found');
+      return true;
+    }
+    throw error;
+  }
 }
 
 function setSecurityHeaders(res) {
@@ -158,6 +232,9 @@ async function requestHandler(req, res) {
   setSecurityHeaders(res);
   const origin = req.headers.host ? `http://${req.headers.host}` : 'http://localhost';
   const url = new URL(req.url, origin);
+  if (await tryServeStatic(req, res, url)) {
+    return;
+  }
 
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
