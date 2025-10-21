@@ -7,8 +7,13 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
-    "test": "node --test",
-    "lint": "node scripts/lint.js"
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:backend": "node --test \"test/**/*.test.js\"",
+    "test:client": "echo '前端单测需在具备 Vitest 的环境执行'",
+    "lint": "node scripts/lint.js",
+    "client:dev": "vite --config app/vite.config.ts",
+    "client:build": "vite build --config app/vite.config.ts",
+    "client:preview": "vite preview --config app/vite.config.ts"
   },
   "engines": {
     "node": ">=18"
@@ -20,5 +25,24 @@
     "jwt"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "immer": "^10.1.1",
+    "mitt": "^3.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.2",
+    "@testing-library/react": "^14.2.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^20.12.7",
+    "@types/react": "^18.2.21",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.8",
+    "vitest": "^1.5.0"
+  }
 }
