@@ -84,6 +84,31 @@ const ERROR_CODES = {
     message: 'Room already finished.',
     userMessage: '对局已结束。'
   },
+  CONFIG_MISSING_SECRET: {
+    httpStatus: 500,
+    message: 'Required secret is missing from configuration.',
+    userMessage: '服务配置缺失，请稍后重试。'
+  },
+  TASK_NOT_FOUND: {
+    httpStatus: 404,
+    message: 'Task definition not found.',
+    userMessage: '任务不存在或已下线。'
+  },
+  TASK_NOT_AVAILABLE: {
+    httpStatus: 404,
+    message: 'Task is not available for the player.',
+    userMessage: '当前无法领取该任务，请刷新后再试。'
+  },
+  TASK_NOT_COMPLETED: {
+    httpStatus: 409,
+    message: 'Task requirements not met.',
+    userMessage: '任务尚未完成，继续加油吧。'
+  },
+  TASK_ALREADY_CLAIMED: {
+    httpStatus: 409,
+    message: 'Task reward already claimed.',
+    userMessage: '奖励已领取，请勿重复操作。'
+  },
   SERVER_ERROR: {
     httpStatus: 500,
     message: 'Unexpected server error.',

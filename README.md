@@ -1,6 +1,6 @@
-# Practice Card Games — Phase 1 PVP Slice
+# Practice Card Games — Phase 3 Progression Slice
 
-本仓库在 Phase 0 登录与安全基线之上，完成了匹配大厅、房间管理与五子棋实时对局闭环，对应《施工图》中的 Phase 1。
+本仓库在 Phase 0～2 的登录、安全与多玩法实时对战基线上，进一步交付 Phase 3 所需的段位评分、排行榜、任务系统与玩家资料卡能力。
 
 ## 功能概览
 - **Telegram 登录校验**：验证 `initData` HMAC，生成 HS256 JWT 会话令牌。
@@ -8,7 +8,10 @@
 - **房间与回流**：`/api/rooms` 查询当前房间，`/api/rooms/join` 获取快照与事件序列，用于重连补偿。
 - **实时对战 WebSocket**：`/ws?token=<JWT>` 下行 `room_state`、`match_started`、`action_applied`、`match_result` 等事件，支持断线重连与心跳。
 - **五子棋引擎**：纯函数实现 15x15 自由连五，事件溯源日志可复盘整局。
-- **文档交付**：`openapi.yaml`、`docs/ws-contract.md`、`docs/engine-gomoku.md`、更新后的错误码字典等。
+- **段位与排行榜**：基于 Glicko-2 的评分系统，`/api/leaderboard` 覆盖总榜/7 天/30 天窗口，胜率、活跃度一览。
+- **资料卡与历史战绩**：`/api/profile/:id` 返回评分详情、连胜纪录、最近 15 场战绩及成就徽章，并生成分享卡片文案。
+- **每日任务与奖励**：`/api/tasks/today` 汇总每日目标，胜利、连胜、对局参与均可推进；`/api/tasks/:id/claim` 发放金币奖励。
+- **文档交付**：`openapi.yaml`、`docs/ws-contract.md`、`docs/engine-gomoku.md`、`docs/error-codes.md` 等随 Phase 3 更新。
 
 ## 快速开始
 1. 复制 `.env.example` 为 `.env` 并填入密钥：
@@ -55,7 +58,7 @@
 │   ├── errors/             # 错误码定义
 │   ├── engines/            # 游戏引擎（gomoku）
 │   ├── realtime/           # WebSocket 握手与事件分发
-│   ├── services/           # 业务逻辑（Auth/匹配/房间）
+│   ├── services/           # 业务逻辑（Auth/匹配/房间/进度）
 │   ├── utils/              # JWT/Telegram/鉴权工具函数
 │   └── server.js           # HTTP Server 入口
 ├── test/                   # 单元与集成测试
@@ -71,4 +74,5 @@
 
 ## 阶段路线图
 - Phase 1：已交付大厅→匹配→房间→五子棋闭环。
-- Phase 2+：新增多种游戏引擎、完善大厅体验。
+- Phase 2：已接入斗地主、德州扑克、中国象棋与国际象棋骨架。
+- Phase 3：已交付排行榜、Glicko2 段位、任务系统与资料卡。

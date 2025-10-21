@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Practice Card Games Realtime API
-  version: 0.3.0
+  version: 0.4.0
   description: |
-    Phase 2 在 Phase 1 的实时闭环基础上，扩展多游戏大厅、元数据查询与多玩法引擎骨架。
+    Phase 3 在实时对战与多玩法的基础上，补齐段位评分、排行榜、任务系统与玩家资料卡。
 servers:
   - url: https://dev.api.practice-card.games
     description: 开发环境
@@ -89,6 +89,87 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/Game'
+  /api/leaderboard:
+    get:
+      summary: 查询排行榜
+      operationId: getLeaderboard
+      tags:
+        - progression
+      parameters:
+        - in: query
+          name: scope
+          required: false
+          schema:
+            type: string
+            enum:
+              - overall
+              - weekly
+              - monthly
+              - 7d
+              - 30d
+          description: 排行榜窗口（overall=总榜，weekly=近7天，monthly=近30天）
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: 返回条目上限，默认 50
+      responses:
+        '200':
+          description: 排行榜数据
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      leaderboard:
+                        $ref: '#/components/schemas/Leaderboard'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/profile/{id}:
+    get:
+      summary: 查询玩家资料卡
+      operationId: getProfile
+      tags:
+        - progression
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 玩家资料卡
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      profile:
+                        $ref: '#/components/schemas/Profile'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/games/{id}/meta:
     get:
       summary: 获取指定游戏的元数据
@@ -317,6 +398,96 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /api/tasks/today:
+    get:
+      summary: 获取当日任务列表
+      operationId: getTodayTasks
+      tags:
+        - progression
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 返回任务状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      tasks:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TaskEntry'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/tasks/{id}/claim:
+    post:
+      summary: 领取任务奖励
+      operationId: claimTask
+      tags:
+        - progression
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 领取成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      claim:
+                        $ref: '#/components/schemas/TaskClaim'
+        '401':
+          description: 未登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 任务不存在或不可领取
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 任务未完成或已领取
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: 服务端异常
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   schemas:
     ErrorResponse:
@@ -523,6 +694,201 @@ components:
         nextTurnPlayerId:
           type: string
           nullable: true
+    Leaderboard:
+      type: object
+      properties:
+        scope:
+          type: string
+          enum:
+            - overall
+            - weekly
+            - monthly
+        generatedAt:
+          type: integer
+        totalPlayers:
+          type: integer
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/LeaderboardEntry'
+    LeaderboardEntry:
+      type: object
+      properties:
+        rank:
+          type: integer
+        playerId:
+          type: string
+        rating:
+          type: integer
+        deviation:
+          type: integer
+        tier:
+          type: string
+        winRate:
+          type: number
+          format: float
+        wins:
+          type: integer
+        losses:
+          type: integer
+        lastActiveAt:
+          type: integer
+          nullable: true
+    Profile:
+      type: object
+      properties:
+        playerId:
+          type: string
+        rating:
+          type: object
+          properties:
+            value:
+              type: number
+            deviation:
+              type: number
+            volatility:
+              type: number
+            tier:
+              type: string
+            best:
+              type: number
+        stats:
+          type: object
+          properties:
+            totalMatches:
+              type: integer
+            wins:
+              type: integer
+            losses:
+              type: integer
+            draws:
+              type: integer
+            winRate:
+              type: number
+              format: float
+            winStreak:
+              type: integer
+            bestWinStreak:
+              type: integer
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileHistoryEntry'
+        achievements:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              description:
+                type: string
+              earnedAt:
+                type: integer
+        currencies:
+          type: object
+          properties:
+            coins:
+              type: integer
+        createdAt:
+          type: integer
+        lastActiveAt:
+          type: integer
+          nullable: true
+        shareCard:
+          type: object
+          nullable: true
+          properties:
+            headline:
+              type: string
+            subline:
+              type: string
+            highlight:
+              type: object
+              nullable: true
+              properties:
+                gameId:
+                  type: string
+                result:
+                  type: string
+                delta:
+                  type: number
+    ProfileHistoryEntry:
+      type: object
+      properties:
+        matchId:
+          type: string
+        roomId:
+          type: string
+        gameId:
+          type: string
+        result:
+          type: string
+          enum:
+            - win
+            - loss
+            - draw
+        ratingBefore:
+          type: number
+        ratingAfter:
+          type: number
+        ratingDelta:
+          type: number
+        opponents:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              seat:
+                type: integer
+              attributes:
+                type: object
+                additionalProperties: true
+        playedAt:
+          type: integer
+        reason:
+          type: string
+          nullable: true
+    TaskEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+        progress:
+          type: integer
+        goal:
+          type: integer
+        completed:
+          type: boolean
+        claimed:
+          type: boolean
+        reward:
+          type: object
+          additionalProperties:
+            type: integer
+        updatedAt:
+          type: integer
+        expiresAt:
+          type: integer
+    TaskClaim:
+      type: object
+      properties:
+        taskId:
+          type: string
+        reward:
+          type: object
+          additionalProperties:
+            type: integer
   securitySchemes:
     bearerAuth:
       type: http
