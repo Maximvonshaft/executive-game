@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | `join_room` | 订阅房间事件流，并立即收到最新 `room_state` | `{ "roomId": string, "sinceSeq?": number }` |
 | `ready` | 准备完毕，等待开局 | `{ "roomId": string }` |
-| `play_action` | 发起落子动作 | `{ "roomId": string, "position": { "x": number, "y": number } }` |
+| `play_action` | 发起游戏动作 | `{ "roomId": string, "action": object }`<br/>（兼容 Phase 1，可继续发送 `position` 字段，服务端会转换为 `{ action: { position } }`） |
 | `request_state` | 按序号补齐历史事件 | `{ "roomId": string, "sinceSeq": number }` |
 | `ping` | 客户端心跳 | `{}` |
 
@@ -21,11 +21,11 @@
 | --- | --- | --- |
 | `room_state` | 房间全量状态（含棋盘、玩家、结果） | `{ "sequence": number, "state": RoomState }` |
 | `player_ready` | 某玩家完成准备 | `{ "sequence": number, "payload": { roomId, playerId } }` |
-| `match_started` | 所有玩家准备完毕，进入对局 | `{ "sequence": number, "payload": { roomId, gameId, players[] } }` |
-| `turn_started` | 轮到某玩家落子 | `{ "sequence": number, "payload": { roomId, playerId, stone } }` |
-| `action_applied` | 落子成功并广播棋盘 | `{ "sequence": number, "payload": { roomId, playerId, stone, position, board, moves } }` |
-| `action_rejected` | 落子无效，包含原因 | `{ "sequence": number, "payload": { roomId, playerId, reason, position } }` |
-| `match_result` | 对局结束（胜负或平局） | `{ "sequence": number, "payload": { roomId, winnerId, reason, winningLine? } }` |
+| `match_started` | 所有玩家准备完毕，进入对局 | `{ "sequence": number, "payload": { roomId, gameId, players[] } }`（`players[]` 由具体引擎决定，例如五子棋含 `stone`，斗地主含 `role`） |
+| `turn_started` | 轮到某玩家行动 | `{ "sequence": number, "payload": { roomId, playerId, seat?, stone?/role?/color? } }` |
+| `action_applied` | 动作成功并广播局面 | `{ "sequence": number, "payload": { roomId, playerId, seat?, action, stateDiff? } }`（五子棋继续返回 `board`/`moves`，斗地主会返回 `handCounts`、`lastAction` 等） |
+| `action_rejected` | 动作无效，包含原因 | `{ "sequence": number, "payload": { roomId, playerId, reason, action } }` |
+| `match_result` | 对局结束（胜负或平局） | `{ "sequence": number, "payload": { roomId, winnerId?, winnerIds?, winnerSeats?, reason, extra? } }` |
 | `pong` | 心跳应答 | `{ "timestamp": number }` |
 | `error` | 业务错误提示 | `{ "code": string }` |
 
@@ -33,13 +33,16 @@
 ```ts
 interface RoomState {
   roomId: string;
-  gameId: 'gomoku';
+  gameId: string;
   status: 'waiting' | 'active' | 'finished';
-  players: Array<{ id: string; seat: number; stone: 'black' | 'white'; ready: boolean }>;
+  players: Array<Record<string, unknown>>; // 由各引擎返回，至少包含 id/seat/ready
   sequence: number;
-  board: Array<Array<'black' | 'white' | null>> | null;
-  moves: Array<{ x: number; y: number; stone: 'black' | 'white' }>;
-  result: null | { winnerId: string | null; reason: string; winningLine?: Array<{ x: number; y: number }> };
+  result: null | Record<string, unknown>;
+  state: Record<string, unknown>; // 引擎公开态，如五子棋的 board/moves、斗地主的 handCounts 等
+  board?: Array<Array<string | null>> | null; // 向后兼容 Phase 1
+  moves?: Array<Record<string, unknown>>;
+  handCounts?: Array<{ seat: number; count: number }>;
+  community?: Array<string>;
   nextTurnPlayerId: string | null;
 }
 ```
@@ -61,8 +64,17 @@ interface RoomState {
 | `ROOM_NOT_MEMBER` | 非房间成员 |
 | `ROOM_ID_REQUIRED` | 缺少房间编号 |
 | `ROOM_NOT_ACTIVE` | 对局尚未开始 |
-| `ACTION_INVALID` | 落子 payload 不完整 |
-| `ACTION_OUT_OF_RANGE` / `ACTION_NOT_PLAYER_TURN` / `ACTION_CELL_OCCUPIED` | 规则校验失败 |
+| `ACTION_INVALID` | 动作 payload 不完整 |
+| `ACTION_OUT_OF_RANGE` / `ACTION_NOT_PLAYER_TURN` | 规则校验失败（坐标越界 / 未轮到当前玩家） |
+| `ACTION_CELL_OCCUPIED` | 五子棋落子点已被占用 |
+| `ACTION_CARD_NOT_OWNED` | 斗地主尝试出的牌不在手牌中 |
+| `ACTION_PASS_NOT_ALLOWED` | 斗地主在当前轮不允许过牌 |
+| `ACTION_UNSUPPORTED` | 引擎未实现该动作类型 |
+| `ACTION_PLAYER_FOLDED` | 德州扑克玩家已弃牌 |
+| `ACTION_NOT_ENOUGH_STACK` | 德州扑克筹码不足 |
+| `ACTION_PHASE_COMPLETE` | 德州扑克公共牌已全部翻出 |
+| `ACTION_NO_PIECE` | 象棋/国际象棋原位置没有棋子 |
+| `ACTION_CAPTURE_SELF` | 不能吃掉己方棋子 |
 | `MATCH_ALREADY_FINISHED` | 对局已结束 |
 | `MESSAGE_MALFORMED` | JSON 格式错误 |
 | `MESSAGE_UNSUPPORTED` | 未知事件类型 |

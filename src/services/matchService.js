@@ -46,8 +46,11 @@ class MatchmakingService extends EventEmitter {
 
   match(gameId, game) {
     const queue = this.waitingQueues.get(gameId) || [];
-    while (queue.length >= game.maxPlayers) {
-      const players = queue.splice(0, game.maxPlayers);
+    const minPlayers = Math.max(1, game.minPlayers || 1);
+    const preferred = Math.max(minPlayers, game.matchPlayers || game.maxPlayers || minPlayers);
+    while (queue.length >= minPlayers) {
+      const seatCount = Math.min(queue.length, preferred);
+      const players = queue.splice(0, seatCount);
       const playerIds = players.map((ticket) => ticket.playerId);
       const room = roomManager.createRoom({ gameId, playerIds });
       const now = Date.now();

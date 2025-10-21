@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
   title: Practice Card Games Realtime API
-  version: 0.2.0
+  version: 0.3.0
   description: |
-    Phase 1 在 Phase 0 登录基础上，新增大厅/匹配/房间接口及五子棋实时对局契约。
+    Phase 2 在 Phase 1 的实时闭环基础上，扩展多游戏大厅、元数据查询与多玩法引擎骨架。
 servers:
   - url: https://dev.api.practice-card.games
     description: 开发环境
@@ -89,6 +89,40 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/Game'
+  /api/games/{id}/meta:
+    get:
+      summary: 获取指定游戏的元数据
+      operationId: getGameMeta
+      tags:
+        - lobby
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 游戏元数据
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      game:
+                        $ref: '#/components/schemas/GameMeta'
+        '404':
+          description: 游戏不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: 服务端异常
           content:
@@ -344,23 +378,56 @@ components:
           type: string
         description:
           type: string
+        genre:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
         minPlayers:
           type: integer
         maxPlayers:
+          type: integer
+        matchPlayers:
           type: integer
         turnOrder:
           type: string
         rulesVersion:
           type: string
+        assets:
+          type: object
+          additionalProperties:
+            type: string
         metadata:
           type: object
+          additionalProperties:
+            oneOf:
+              - type: string
+              - type: integer
+              - type: number
+              - type: boolean
+    GameMeta:
+      allOf:
+        - $ref: '#/components/schemas/Game'
+        - type: object
           properties:
-            boardSize:
-              type: integer
-            firstMove:
+            summary:
               type: string
-            timeLimitSeconds:
-              type: integer
+            seats:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            flow:
+              type: array
+              items:
+                type: string
+            ui:
+              type: object
+              additionalProperties:
+                type: string
     MatchTicket:
       type: object
       properties:

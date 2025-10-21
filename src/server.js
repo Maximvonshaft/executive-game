@@ -3,7 +3,7 @@ const { URL } = require('url');
 const { config } = require('./config/env');
 const { ApplicationError, ERROR_CODES, createError } = require('./errors/codes');
 const { authenticateWithTelegram } = require('./services/authService');
-const { listGames, getGameById } = require('./services/gameService');
+const { listGames, getGameById, getGameMeta } = require('./services/gameService');
 const { matchmaker } = require('./services/matchService');
 const { roomManager } = require('./services/roomService');
 const { authenticateHttpRequest } = require('./utils/auth');
@@ -110,6 +110,26 @@ async function requestHandler(req, res) {
 
   if (req.method === 'GET' && url.pathname === '/api/games') {
     respondSuccess(res, { games: listGames() });
+    return;
+  }
+
+  if (req.method === 'GET' && /^\/api\/games\/[\w-]+\/meta$/.test(url.pathname)) {
+    try {
+      const [, , , gameId, metaSegment] = url.pathname.split('/');
+      if (metaSegment !== 'meta') {
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: false, error: { code: 'NOT_FOUND', message: '资源不存在' } }));
+        return;
+      }
+      const meta = getGameMeta(gameId);
+      if (!meta) {
+        throw createError('MATCH_GAME_NOT_FOUND');
+      }
+      respondSuccess(res, { game: meta });
+    } catch (error) {
+      handleError(error, res);
+    }
     return;
   }
 
