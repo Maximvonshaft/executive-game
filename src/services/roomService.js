@@ -3,6 +3,9 @@ const { EventEmitter } = require('events');
 const { createError } = require('../errors/codes');
 const { getGameById } = require('./gameService');
 const { getEngineAdapter } = require('../engines/registry');
+const observability = require('./observability');
+const antiCheat = require('./antiCheatService');
+const audit = require('./auditService');
 const social = require('./socialService');
 
 const INVITE_CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -54,6 +57,38 @@ function parseSpectatorLimit(value) {
   }
   const limit = Math.max(0, Math.floor(coerced));
   return Number.isFinite(limit) ? limit : DEFAULT_SPECTATOR_LIMIT;
+}
+
+function sanitizeIdempotencyKey(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.slice(0, 128);
+}
+
+function normaliseFrameId(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric < 0) {
+    return null;
+  }
+  return numeric;
+}
+
+function ensureActionGuards(room) {
+  if (!room.actionGuards) {
+    room.actionGuards = {
+      frameByPlayer: new Map(),
+      idempotencyByPlayer: new Map()
+    };
+  }
+  return room.actionGuards;
 }
 
 function rebuildPlayers({ engine, gameId, playerIds, previousPlayers = [], timestamp = Date.now() }) {
@@ -152,7 +187,12 @@ class RoomManager extends EventEmitter {
       spectators: new Map(),
       minPlayers: Math.max(1, game.minPlayers || 1),
       maxPlayers: Math.max(uniquePlayers.length, game.maxPlayers || uniquePlayers.length),
-      inviteCode: null
+      inviteCode: null,
+      actionGuards: {
+        frameByPlayer: new Map(),
+        idempotencyByPlayer: new Map()
+      },
+      matchWaitRecorded: false
     };
     if (room.visibility === 'private') {
       room.inviteCode = this.assignInviteCode(room, inviteCode);
@@ -172,6 +212,8 @@ class RoomManager extends EventEmitter {
       spectatorLimit: room.spectatorLimit,
       spectatorDelayMs: room.spectatorDelayMs
     };
+    audit.registerRoom(room);
+    observability.addLog('info', 'room_created', { roomId: id, gameId });
     this.emitRoomEvent(room, 'room_created', payload);
     return room;
   }
@@ -585,6 +627,12 @@ class RoomManager extends EventEmitter {
     room.engineState = room.engine.createInitialState({ room });
     room.status = 'active';
     room.updatedAt = Date.now();
+    room.matchStartedAt = room.updatedAt;
+    const waitDuration = room.matchStartedAt - room.createdAt;
+    if (!room.matchWaitRecorded) {
+      observability.recordHistogram('match_wait_ms', waitDuration, { gameId: room.gameId });
+      room.matchWaitRecorded = true;
+    }
     const startPayload = room.engine.describeMatchStart({ room, state: room.engineState });
     this.emitRoomEvent(room, 'match_started', startPayload);
     const turnInfo = room.engine.getTurnInfo({ room, state: room.engineState });
@@ -593,7 +641,7 @@ class RoomManager extends EventEmitter {
     }
   }
 
-  applyPlayerAction({ roomId, playerId, action }) {
+  applyPlayerAction({ roomId, playerId, action, idempotencyKey, clientFrame }) {
     const { room, player } = this.requireRoomMember(roomId, playerId);
     if (room.status !== 'active') {
       return { error: 'ROOM_NOT_ACTIVE', room };
@@ -605,6 +653,104 @@ class RoomManager extends EventEmitter {
     if (playerIndex === -1) {
       throw new Error('PLAYER_INDEX_NOT_FOUND');
     }
+    const guard = ensureActionGuards(room);
+    const frameId = normaliseFrameId(clientFrame);
+    const key = sanitizeIdempotencyKey(idempotencyKey);
+    const span = observability.startSpan('room.apply_action', {
+      roomId: room.id,
+      playerId,
+      gameId: room.gameId
+    });
+    span.addEvent('action_received', { hasFrame: frameId !== null, hasKey: Boolean(key) });
+    const frameMap = guard.frameByPlayer;
+    const previousFrame = frameMap.get(player.id) || 0;
+    let keyMap = null;
+    if (key) {
+      keyMap = guard.idempotencyByPlayer.get(player.id) || null;
+      if (keyMap && keyMap.has(key)) {
+        const anomaly = antiCheat.recordAnomaly({
+          roomId: room.id,
+          playerId,
+          type: 'idempotency_replay',
+          severity: 'info',
+          details: { key }
+        });
+        observability.addLog('info', 'action_duplicate_ignored', {
+          roomId: room.id,
+          playerId,
+          idempotencyKey: key,
+          fingerprint: anomaly.fingerprint
+        });
+        this.emitRoomEvent(room, 'action_rejected', {
+          roomId,
+          playerId,
+          reason: 'ACTION_DUPLICATE',
+          action,
+          fingerprint: anomaly.fingerprint,
+          idempotencyKey: key
+        });
+        span.addEvent('guard_rejected', { reason: 'duplicate', idempotencyKey: key });
+        span.end({ statusCode: 'ERROR', message: 'duplicate_action' });
+        return { error: 'ACTION_DUPLICATE', room };
+      }
+    }
+    if (frameId !== null) {
+      const expected = previousFrame + 1;
+      if (frameId < expected) {
+        const anomaly = antiCheat.recordAnomaly({
+          roomId: room.id,
+          playerId,
+          type: 'frame_replay',
+          details: { expected, received: frameId }
+        });
+        observability.addLog('warn', 'action_frame_replay', {
+          roomId: room.id,
+          playerId,
+          expectedFrame: expected,
+          receivedFrame: frameId,
+          fingerprint: anomaly.fingerprint
+        });
+        this.emitRoomEvent(room, 'action_rejected', {
+          roomId,
+          playerId,
+          reason: 'ACTION_FRAME_REPLAYED',
+          action,
+          fingerprint: anomaly.fingerprint,
+          expectedFrame: expected,
+          receivedFrame: frameId
+        });
+        span.addEvent('guard_rejected', { reason: 'frame_replayed', expectedFrame: expected, receivedFrame: frameId });
+        span.end({ statusCode: 'ERROR', message: 'frame_replayed' });
+        return { error: 'ACTION_FRAME_REPLAYED', room };
+      }
+      if (frameId > expected) {
+        const anomaly = antiCheat.recordAnomaly({
+          roomId: room.id,
+          playerId,
+          type: 'frame_out_of_sync',
+          details: { expected, received: frameId }
+        });
+        observability.addLog('warn', 'action_frame_out_of_sync', {
+          roomId: room.id,
+          playerId,
+          expectedFrame: expected,
+          receivedFrame: frameId,
+          fingerprint: anomaly.fingerprint
+        });
+        this.emitRoomEvent(room, 'action_rejected', {
+          roomId,
+          playerId,
+          reason: 'ACTION_FRAME_OUT_OF_SYNC',
+          action,
+          fingerprint: anomaly.fingerprint,
+          expectedFrame: expected,
+          receivedFrame: frameId
+        });
+        span.addEvent('guard_rejected', { reason: 'frame_out_of_sync', expectedFrame: expected, receivedFrame: frameId });
+        span.end({ statusCode: 'ERROR', message: 'frame_out_of_sync' });
+        return { error: 'ACTION_FRAME_OUT_OF_SYNC', room };
+      }
+    }
     const outcome = room.engine.applyAction({ room, state: room.engineState, players: room.players, playerIndex, action, player });
     if (outcome.error) {
       this.emitRoomEvent(room, 'action_rejected', {
@@ -613,10 +759,22 @@ class RoomManager extends EventEmitter {
         reason: outcome.error,
         action
       });
+      span.addEvent('engine_rejected', { reason: outcome.error });
+      span.end({ statusCode: 'ERROR', message: outcome.error });
       return { error: outcome.error, room };
     }
     room.engineState = outcome.state;
     room.updatedAt = Date.now();
+    if (frameId !== null) {
+      frameMap.set(player.id, frameId);
+    }
+    if (key) {
+      if (!keyMap) {
+        keyMap = new Map();
+        guard.idempotencyByPlayer.set(player.id, keyMap);
+      }
+      keyMap.set(key, { sequence: room.sequence + 1, frame: frameId });
+    }
     if (Array.isArray(outcome.events)) {
       outcome.events.forEach((event) => {
         if (!event || typeof event.type !== 'string') {
@@ -630,12 +788,18 @@ class RoomManager extends EventEmitter {
       const { summary, eventPayload } = room.engine.describeResult({ room, state: room.engineState, result: outcome.result });
       room.result = summary;
       this.emitRoomEvent(room, 'match_result', eventPayload || {});
+      if (room.matchStartedAt) {
+        const duration = Date.now() - room.matchStartedAt;
+        observability.recordHistogram('match_duration_ms', duration, { gameId: room.gameId });
+      }
     } else {
       const turnInfo = room.engine.getTurnInfo({ room, state: room.engineState });
       if (turnInfo) {
         this.emitRoomEvent(room, 'turn_started', turnInfo);
       }
     }
+    span.addEvent('action_applied', { sequence: room.sequence });
+    span.end({ statusCode: 'OK' });
     return { room };
   }
 
@@ -648,6 +812,8 @@ class RoomManager extends EventEmitter {
       timestamp: Date.now()
     };
     room.events.push(event);
+    audit.appendEvent({ room, event });
+    observability.addLog('debug', 'room_event', { roomId: room.id, sequence: event.sequence, type });
     this.emit('event', {
       roomId: room.id,
       room,

@@ -3,6 +3,7 @@ const { createWebSocketServer } = require('./simpleWebSocketServer');
 const { authenticateToken } = require('../utils/auth');
 const { ApplicationError } = require('../errors/codes');
 const { roomManager } = require('../services/roomService');
+const observability = require('../services/observability');
 
 function createMessage(type, payload) {
   return JSON.stringify({ type, ...payload });
@@ -232,7 +233,13 @@ function setupRealtime(server) {
         context.connection.sendText(createMessage('error', { code: 'ROOM_SPECTATOR_FORBIDDEN' }));
         return;
       }
-      roomManager.applyPlayerAction({ roomId, playerId: context.playerId, action });
+      roomManager.applyPlayerAction({
+        roomId,
+        playerId: context.playerId,
+        action,
+        idempotencyKey: message.idempotencyKey,
+        clientFrame: message.clientFrame
+      });
     } catch (error) {
       if (error instanceof ApplicationError) {
         context.connection.sendText(createMessage('error', { code: error.code }));
@@ -250,6 +257,15 @@ function setupRealtime(server) {
     }
     try {
       const events = roomManager.getEventsSince(roomId, sinceSeq);
+      if (events.length > 0) {
+        const first = events[0];
+        const last = events[events.length - 1];
+        const recoveryMs = Math.max(0, last.timestamp - first.timestamp);
+        observability.recordHistogram('disconnect_recovery_ms', recoveryMs, {
+          roomId,
+          eventCount: events.length
+        });
+      }
       events.forEach((event) => {
         const messagePayload = createMessage(event.type, { sequence: event.sequence, payload: event.payload });
         sendMessageToContext(context, roomId, messagePayload);
@@ -287,9 +303,17 @@ function setupRealtime(server) {
       case 'request_state':
         handleRequestState(context, message);
         break;
-      case 'ping':
+      case 'ping': {
+        const clientTimestamp = Number(message.clientTimestamp);
+        if (Number.isFinite(clientTimestamp)) {
+          const latency = Math.max(0, Date.now() - clientTimestamp);
+          observability.recordHistogram('ws_latency_ms', latency, { playerId: context.playerId });
+        } else {
+          observability.recordHistogram('ws_latency_ms', 0, { playerId: context.playerId });
+        }
         context.connection.sendText(createMessage('pong', { timestamp: Date.now() }));
         break;
+      }
       default:
         context.connection.sendText(createMessage('error', { code: 'MESSAGE_UNSUPPORTED' }));
         break;
@@ -333,13 +357,18 @@ function setupRealtime(server) {
       connections.set(connection, context);
       activeConnections.add(connection);
       connection.on('message', (message) => {
-        handleMessage(context, message);
+        try {
+          handleMessage(context, message);
+        } catch (error) {
+          connection.sendText(createMessage('error', { code: 'SERVER_ERROR' }));
+        }
       });
       connection.on('close', () => {
         unsubscribeAll(context);
         connections.delete(connection);
         activeConnections.delete(connection);
       });
+      connection.on('error', () => {});
     }
   });
 

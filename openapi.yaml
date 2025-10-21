@@ -12,6 +12,40 @@ servers:
   - url: https://api.practice-card.games
     description: 生产环境
 paths:
+  /internal/replay/{roomId}:
+    get:
+      summary: 查询房间审计回放
+      description: 内部只读接口，返回指定房间的事件哈希链与重放所需信息。
+      tags:
+        - internal
+      parameters:
+        - in: path
+          name: roomId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 返回审计回放数据
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      replay:
+                        $ref: '#/components/schemas/AuditReplay'
+        '404':
+          description: 未找到回放记录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /api/auth/telegram:
     post:
       summary: 使用 Telegram WebApp initData 登录
@@ -889,6 +923,72 @@ components:
         matchedAt:
           type: integer
           nullable: true
+    AuditEvent:
+      type: object
+      properties:
+        sequence:
+          type: integer
+        type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        timestamp:
+          type: integer
+          format: int64
+        prevHash:
+          type: string
+        hash:
+          type: string
+    AuditReplay:
+      type: object
+      properties:
+        roomId:
+          type: string
+        gameId:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        completedAt:
+          type: integer
+          format: int64
+          nullable: true
+        ownerId:
+          type: string
+          nullable: true
+        visibility:
+          type: string
+          enum:
+            - public
+            - private
+        players:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              seat:
+                type: integer
+              attributes:
+                type: object
+                additionalProperties: true
+        finalResult:
+          type: object
+          nullable: true
+          additionalProperties: true
+        integrity:
+          type: object
+          properties:
+            tailHash:
+              type: string
+            eventCount:
+              type: integer
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
     RoomState:
       type: object
       properties:

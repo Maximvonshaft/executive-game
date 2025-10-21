@@ -69,6 +69,11 @@ const ERROR_CODES = {
     message: 'Room not found.',
     userMessage: '房间不存在或已关闭。'
   },
+  REPLAY_NOT_FOUND: {
+    httpStatus: 404,
+    message: 'Replay not found.',
+    userMessage: '暂未找到该对局的审计记录。'
+  },
   ROOM_NOT_MEMBER: {
     httpStatus: 403,
     message: 'Player is not part of the room.',
@@ -123,6 +128,21 @@ const ERROR_CODES = {
     httpStatus: 403,
     message: 'Spectators cannot perform this action.',
     userMessage: '观战模式下无法执行此操作。'
+  },
+  ACTION_FRAME_REPLAYED: {
+    httpStatus: 409,
+    message: 'Action frame already processed.',
+    userMessage: '动作已被处理，请等待回放同步。'
+  },
+  ACTION_FRAME_OUT_OF_SYNC: {
+    httpStatus: 409,
+    message: 'Action frame sequence mismatch.',
+    userMessage: '动作顺序异常，请刷新后重试。'
+  },
+  ACTION_DUPLICATE: {
+    httpStatus: 409,
+    message: 'Duplicate idempotent action received.',
+    userMessage: '重复的操作请求已忽略。'
   },
   ROOM_ACTION_UNSUPPORTED: {
     httpStatus: 400,
