@@ -7,6 +7,21 @@ export type PlayerProfile = {
   rating: number;
   ratingDeviation: number;
   tier: string;
+  identity?: {
+    avatarUrl: string;
+    frameUrl?: string;
+    bannerUrl?: string;
+    title?: string;
+  };
+  preferences?: {
+    primaryHand?: 'left' | 'right' | 'ambidextrous';
+    orientationLock?: 'auto' | 'landscape' | 'portrait';
+    effectIntensity?: 'low' | 'medium' | 'high';
+    enableHaptics?: boolean;
+    language?: string;
+    colorblindMode?: 'off' | 'protanopia' | 'deuteranopia' | 'tritanopia';
+    textSize?: 'default' | 'large' | 'extra-large';
+  };
   stats: {
     totalMatches: number;
     wins: number;
