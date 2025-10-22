@@ -29,7 +29,7 @@ export function Text({
   tone = 'default',
   align = 'left'
 }: TextProps) {
-  const tokens = typographyScale[variant];
+  const tokens = typographyScale[variant] ?? typographyScale.body;
   return (
     <span
       style={{
