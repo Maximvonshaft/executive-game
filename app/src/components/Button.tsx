@@ -1,7 +1,7 @@
 import { ButtonHTMLAttributes, forwardRef, ReactNode } from 'react';
 import { motionTokens, radiusScale, spacingScale } from '../theme/tokens';
 
-type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost';
+type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
 const sizeTokens: Record<ButtonSize, { height: number; paddingX: number; textSize: number }> = {
@@ -34,6 +34,12 @@ const variantTokens: Record<ButtonVariant, { background: string; color: string; 
     color: 'var(--color-textMuted)',
     border: '1px solid transparent',
     hover: 'rgba(245, 196, 81, 0.16)'
+  },
+  danger: {
+    background: 'linear-gradient(135deg, #f97316, #ef4444)',
+    color: '#ffffff',
+    border: '1px solid rgba(239, 68, 68, 0.9)',
+    hover: 'linear-gradient(135deg, #ef4444, #dc2626)'
   }
 };
 

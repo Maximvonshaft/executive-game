@@ -18,10 +18,11 @@ export function Surface({
   role,
   ...rest
 }: SurfaceProps) {
+  const { style, ...sectionProps } = rest;
   return (
     <section
       role={role}
-      {...rest}
+      {...sectionProps}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -30,7 +31,8 @@ export function Surface({
         background: 'var(--color-surface)',
         borderRadius: `${radiusScale[radius]}px`,
         boxShadow: elevationShadow[elevation],
-        border: '1px solid var(--color-border)'
+        border: '1px solid var(--color-border)',
+        ...(style as Record<string, unknown>)
       }}
     >
       {children}
