@@ -8,6 +8,15 @@
  * API endpoints and update the UI based on real data.
  */
 
+const assetCdn = {
+  coverTexas: 'https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=80',
+  coverChess: 'https://images.unsplash.com/photo-1529692236671-f1dc00662485?auto=format&fit=crop&w=1200&q=80',
+  coverDoudizhu: 'https://images.unsplash.com/photo-1556740749-887f6717d7e4?auto=format&fit=crop&w=1200&q=80',
+  coverXiangqi: 'https://images.unsplash.com/photo-1507835661120-30e665aeb79b?auto=format&fit=crop&w=1200&q=80',
+  coverAi: 'https://images.unsplash.com/photo-1526498460520-4c246339dccb?auto=format&fit=crop&w=1200&q=80',
+  coverPuzzle: 'https://images.unsplash.com/photo-1502741338009-cac2772e18bc?auto=format&fit=crop&w=1200&q=80'
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   const loginBtn = document.getElementById('login-btn');
   loginBtn.addEventListener('click', handleLogin);
@@ -106,12 +115,12 @@ function setActiveNav(item) {
 
 // Hall generation
 const games = [
-  { id: 'texas', name: 'Texas Hold\'em', cover: 'cover_texas.png' },
-  { id: 'chess', name: 'Chess', cover: 'cover_chess.png' },
-  { id: 'doudizhu', name: 'Dou Dizhu', cover: 'cover_doudizhu.png' },
-  { id: 'xiangqi', name: 'Chinese Chess', cover: 'cover_xiangqi.png' },
-  { id: 'ai', name: 'AI Practice', cover: 'cover_ai.png' },
-  { id: 'puzzle', name: 'Puzzles', cover: 'cover_puzzle.png' }
+  { id: 'texas', name: 'Texas Hold\'em', cover: assetCdn.coverTexas },
+  { id: 'chess', name: 'Chess', cover: assetCdn.coverChess },
+  { id: 'doudizhu', name: 'Dou Dizhu', cover: assetCdn.coverDoudizhu },
+  { id: 'xiangqi', name: 'Chinese Chess', cover: assetCdn.coverXiangqi },
+  { id: 'ai', name: 'AI Practice', cover: assetCdn.coverAi },
+  { id: 'puzzle', name: 'Puzzles', cover: assetCdn.coverPuzzle }
 ];
 
 function initHall() {
@@ -120,7 +129,7 @@ function initHall() {
   games.forEach(game => {
     const card = document.createElement('div');
     card.className = 'game-card';
-    card.style.backgroundImage = `url('assets/${game.cover}')`;
+    card.style.backgroundImage = `url('${game.cover}')`;
     // Overlay with title and online players
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
@@ -588,9 +597,9 @@ function initTraining() {
 // Shop page
 function initShop() {
   const items = [
-    { name: 'Golden Theme', price: '500', image: 'cover_texas.png' },
-    { name: 'Futuristic Board', price: '800', image: 'cover_chess.png' },
-    { name: 'Avatar Pack', price: '300', image: 'cover_ai.png' }
+    { name: 'Golden Theme', price: '500', image: assetCdn.coverTexas },
+    { name: 'Futuristic Board', price: '800', image: assetCdn.coverChess },
+    { name: 'Avatar Pack', price: '300', image: assetCdn.coverAi }
   ];
   const container = document.getElementById('shop-items');
   container.innerHTML = '';
@@ -598,7 +607,7 @@ function initShop() {
     const card = document.createElement('div');
     card.className = 'shop-item';
     const img = document.createElement('img');
-    img.src = `assets/${item.image}`;
+    img.src = item.image;
     const nameDiv = document.createElement('div');
     nameDiv.className = 'item-name';
     nameDiv.textContent = item.name;

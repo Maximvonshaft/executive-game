@@ -82,7 +82,7 @@ img {
   left: 0;
   width: 100%;
   height: 100vh;
-  background-image: url('../assets/bg_texture.png');
+  background-image: url('https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=1600&q=80');
   background-size: cover;
   background-position: center;
 }
@@ -113,7 +113,7 @@ img {
   width: 200px;
   height: 200px;
   margin: 0 auto 1.5rem;
-  background-image: url('../assets/login_ring.png');
+  background-image: url('https://images.unsplash.com/photo-1487412720507-4bcfe772ebd7?auto=format&fit=crop&w=800&q=80');
   background-size: contain;
   background-repeat: no-repeat;
   animation: spin 10s linear infinite;
@@ -281,7 +281,7 @@ nav#main-nav {
 .match-ring {
   width: 220px;
   height: 220px;
-  background-image: url('../assets/swirl_ring.png');
+  background-image: url('https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=800&q=80');
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
@@ -375,7 +375,7 @@ nav#main-nav {
 .doudizhu-board {
   width: 600px;
   height: 400px;
-  background-image: url('../assets/board_doudizhu_bg.png');
+  background-image: url('https://images.unsplash.com/photo-1529400971008-f566de0e6dfc?auto=format&fit=crop&w=1600&q=80');
 }
 .doudizhu-board .opponent {
   position: absolute;
@@ -439,7 +439,7 @@ nav#main-nav {
 .texas-board {
   width: 700px;
   height: 420px;
-  background-image: url('../assets/board_texas_bg.png');
+  background-image: url('https://images.unsplash.com/photo-1518544889280-9eead03f1a48?auto=format&fit=crop&w=1600&q=80');
 }
 .texas-board .seat {
   position: absolute;
@@ -495,7 +495,7 @@ nav#main-nav {
 .xiangqi-board {
   width: 480px;
   height: 540px;
-  background-image: url('../assets/board_xiangqi_bg.png');
+  background-image: url('https://images.unsplash.com/photo-1519162584292-56dfc9eb5db4?auto=format&fit=crop&w=1600&q=80');
   background-size: contain;
 }
 .xiangqi-board .player-top,
@@ -519,7 +519,7 @@ nav#main-nav {
 .chess-board {
   width: 480px;
   height: 480px;
-  background-image: url('../assets/board_chess_bg.png');
+  background-image: url('https://images.unsplash.com/photo-1504274066651-8d31a536b11a?auto=format&fit=crop&w=1600&q=80');
   background-size: contain;
 }
 .chess-board .player-top,

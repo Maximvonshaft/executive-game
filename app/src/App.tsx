@@ -2,30 +2,126 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useGlobalStore } from './state/globalStore';
 import { useTheme } from './theme/ThemeProvider';
 import { Layout } from './components/Layout';
-import { Surface } from './components/Surface';
-import { Text } from './components/Text';
-import { Button } from './components/Button';
 import { useToast } from './providers/ToastProvider';
 import { Dialog } from './components/Dialog';
 import { resolveTelegramInitData } from './utils/telegram';
+import { AppHeader } from './components/AppHeader';
+import { PrimaryNavigation } from './components/PrimaryNavigation';
+import { OrientationGuard } from './components/OrientationGuard';
+import { gameCatalog } from './constants/gameCatalog';
+import { OnboardingScreen } from './screens/OnboardingScreen';
+import { LobbyScreen } from './screens/LobbyScreen';
+import { GameScreen } from './screens/GameScreen';
+import { LeaderboardScreen } from './screens/LeaderboardScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
+import { ShopScreen } from './screens/ShopScreen';
+import { TutorialScreen } from './screens/TutorialScreen';
+import { useOrientation } from './hooks/useOrientation';
 
 export function App() {
-  const { initializeSession, sessionStatus, sessionError, authenticateWithTelegram, sessionUser, clearSession } =
-    useGlobalStore((state) => ({
-      initializeSession: state.initializeSession,
-      sessionStatus: state.session.status,
-      sessionError: state.session.error,
-      authenticateWithTelegram: state.authenticateWithTelegram,
-      sessionUser: state.session.user,
-      clearSession: state.clearSession
-    }));
-  const fetchOperationalContent = useGlobalStore((state) => state.fetchOperationalContent);
+  const {
+    initializeSession,
+    sessionStatus,
+    sessionError,
+    authenticateWithTelegram,
+    sessionUser,
+    clearSession,
+    fetchOperationalContent,
+    fetchLeaderboard,
+    leaderboard,
+    fetchDailyTasks,
+    tasks,
+    banners,
+    ui,
+    setScreen,
+    setOrientation: setUiOrientation,
+    setSafeArea,
+    setLandscapeRequired,
+    setLandscapeHintVisible,
+    advanceOnboarding,
+    completeOnboarding,
+    resetOnboarding,
+    selectGame
+  } = useGlobalStore((state) => ({
+    initializeSession: state.initializeSession,
+    sessionStatus: state.session.status,
+    sessionError: state.session.error,
+    authenticateWithTelegram: state.authenticateWithTelegram,
+    sessionUser: state.session.user,
+    clearSession: state.clearSession,
+    fetchOperationalContent: state.fetchOperationalContent,
+    fetchLeaderboard: state.fetchLeaderboard,
+    leaderboard: state.leaderboard,
+    fetchDailyTasks: state.fetchDailyTasks,
+    tasks: state.tasks.items,
+    banners: state.banners.items,
+    ui: state.ui,
+    setScreen: state.setScreen,
+    setOrientation: state.setOrientation,
+    setSafeArea: state.setSafeArea,
+    setLandscapeRequired: state.setLandscapeRequired,
+    setLandscapeHintVisible: state.setLandscapeHintVisible,
+    advanceOnboarding: state.advanceOnboarding,
+    completeOnboarding: state.completeOnboarding,
+    resetOnboarding: state.resetOnboarding,
+    selectGame: state.selectGame
+  }));
   const { toggleContrast, isHighContrast } = useTheme();
   const toast = useToast();
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [manualInitData, setManualInitData] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const isInitializing = useMemo(() => sessionStatus === 'initializing' || isAuthenticating, [sessionStatus, isAuthenticating]);
+  const [selectedAvatar, setSelectedAvatar] = useState<string | null>(null);
+  const orientationInfo = useOrientation();
+  const isInitializing = useMemo(
+    () => sessionStatus === 'initializing' || isAuthenticating,
+    [sessionStatus, isAuthenticating]
+  );
+
+  useEffect(() => {
+    setUiOrientation(orientationInfo.orientation, orientationInfo.aspectRatio);
+    setSafeArea(orientationInfo.safeArea);
+    if (ui.landscapeRequired && orientationInfo.orientation !== 'landscape') {
+      setLandscapeHintVisible(true);
+    }
+  }, [orientationInfo, setUiOrientation, setSafeArea, ui.landscapeRequired, setLandscapeHintVisible]);
+
+  useEffect(() => {
+    if (ui.currentScreen === 'leaderboard' && leaderboard.status === 'idle') {
+      fetchLeaderboard().catch((error) => {
+        toast.present({ title: '排行榜加载失败', description: String(error), tone: 'critical' });
+      });
+    }
+  }, [ui.currentScreen, leaderboard.status, fetchLeaderboard, toast]);
+
+  useEffect(() => {
+    initializeSession().catch((error) => {
+      toast.present({ title: '初始化失败', description: error instanceof Error ? error.message : String(error), tone: 'critical' });
+    });
+  }, [initializeSession, toast]);
+
+  useEffect(() => {
+    fetchOperationalContent().catch((error) => {
+      toast.present({
+        title: '运营内容加载失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        tone: 'caution'
+      });
+    });
+    fetchDailyTasks().catch((error) => {
+      toast.present({
+        title: '任务获取失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        tone: 'caution'
+      });
+    });
+  }, [fetchOperationalContent, fetchDailyTasks, toast]);
+
+  useEffect(() => {
+    if (sessionStatus === 'authenticated' && ui.currentScreen === 'onboarding' && ui.onboardingStep === 0) {
+      advanceOnboarding();
+    }
+  }, [sessionStatus, ui.currentScreen, ui.onboardingStep, advanceOnboarding]);
 
   const performAuthentication = useCallback(
     async (initData: string) => {
@@ -33,19 +129,11 @@ export function App() {
       try {
         await authenticateWithTelegram(initData);
         setManualInitData('');
-        toast.present({
-          title: '登录成功',
-          description: '已获取玩家身份令牌',
-          tone: 'positive'
-        });
+        toast.present({ title: '登录成功', description: '已获取玩家身份令牌', tone: 'positive' });
         return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : '登录失败，请稍后重试';
-        toast.present({
-          title: '登录失败',
-          description: message,
-          tone: 'critical'
-        });
+        toast.present({ title: '登录失败', description: message, tone: 'critical' });
         return false;
       } finally {
         setIsAuthenticating(false);
@@ -86,94 +174,146 @@ export function App() {
 
   const handleLogout = useCallback(() => {
     clearSession();
-    toast.present({
-      title: '已退出登录',
-      tone: 'default'
-    });
-  }, [clearSession, toast]);
+    resetOnboarding();
+    toast.present({ title: '已退出登录', tone: 'default' });
+  }, [clearSession, resetOnboarding, toast]);
 
-  useEffect(() => {
-    initializeSession().catch((error) => {
-      toast.present({
-        title: '初始化失败',
-        description: error.message,
-        tone: 'critical'
-      });
-    });
-  }, [initializeSession, toast]);
+  const handleOnboardingNext = useCallback(() => {
+    if (ui.onboardingStep === 2) {
+      completeOnboarding();
+      setScreen('lobby');
+      return;
+    }
+    advanceOnboarding();
+  }, [ui.onboardingStep, advanceOnboarding, completeOnboarding, setScreen]);
 
-  useEffect(() => {
-    fetchOperationalContent().catch((error) => {
-      toast.present({
-        title: '运营内容加载失败',
-        description: error instanceof Error ? error.message : '请稍后重试',
-        tone: 'caution'
-      });
-    });
-  }, [fetchOperationalContent, toast]);
+  const handleGuestLogin = useCallback(() => {
+    toast.present({ title: '游客模式', description: '已启用游客体验，可随时绑定账号', tone: 'default' });
+    advanceOnboarding();
+  }, [advanceOnboarding, toast]);
+
+  const activeGame = useMemo(
+    () => gameCatalog.find((item) => item.id === ui.selectedGameId) ?? gameCatalog[0],
+    [ui.selectedGameId]
+  );
+
+  const renderedScreen = useMemo(() => {
+    switch (ui.currentScreen) {
+      case 'onboarding':
+        return (
+          <OnboardingScreen
+            step={ui.onboardingStep}
+            sessionStatus={sessionStatus}
+            onTelegramLogin={handleTelegramLogin}
+            onManualLogin={() => setManualDialogOpen(true)}
+            onGuestLogin={handleGuestLogin}
+            isAuthenticating={isAuthenticating}
+            selectedAvatar={selectedAvatar}
+            onSelectAvatar={setSelectedAvatar}
+            onNext={handleOnboardingNext}
+          />
+        );
+      case 'lobby':
+        return (
+          <LobbyScreen
+            games={gameCatalog}
+            banners={banners}
+            tasks={tasks}
+            leaderboard={leaderboard.entries}
+            onSelectGame={(id) => {
+              selectGame(id);
+              setLandscapeRequired(true);
+              if (orientationInfo.orientation !== 'landscape') {
+                setLandscapeHintVisible(true);
+              }
+            }}
+            onOpenLeaderboard={() => setScreen('leaderboard')}
+            onOpenSettings={() => setScreen('settings')}
+            onOpenShop={() => setScreen('shop')}
+          />
+        );
+      case 'game':
+        return <GameScreen game={activeGame} safeArea={ui.safeArea} orientation={ui.orientation} onExit={() => setScreen('lobby')} />;
+      case 'leaderboard':
+        return (
+          <LeaderboardScreen
+            scope={leaderboard.scope}
+            entries={leaderboard.entries}
+            generatedAt={leaderboard.generatedAt}
+            status={leaderboard.status}
+            error={leaderboard.error}
+            onScopeChange={(scope) => fetchLeaderboard(scope).catch(() => undefined)}
+            onRefresh={() => fetchLeaderboard().catch(() => undefined)}
+          />
+        );
+      case 'settings':
+        return <SettingsScreen />;
+      case 'shop':
+        return <ShopScreen />;
+      case 'tutorial':
+        return <TutorialScreen onReturn={() => setScreen('lobby')} />;
+      default:
+        return null;
+    }
+  }, [
+    ui.currentScreen,
+    ui.onboardingStep,
+    sessionStatus,
+    handleTelegramLogin,
+    handleGuestLogin,
+    isAuthenticating,
+    selectedAvatar,
+    handleOnboardingNext,
+    banners,
+    tasks,
+    leaderboard,
+    selectGame,
+    setLandscapeRequired,
+    orientationInfo.orientation,
+    setLandscapeHintVisible,
+    setScreen,
+    activeGame,
+    ui.safeArea,
+    ui.orientation,
+    fetchLeaderboard
+  ]);
 
   return (
-    <Layout.SafeArea>
-      <Layout.Screen>
-        <Surface padding="lg" gap="lg">
-          <Text variant="title" weight="bold">
-            Executive Game 控制台
-          </Text>
-          <Text variant="body" tone="muted">
-            会话状态：{sessionStatus === 'authenticated' ? '已登录' : '未登录'}
-          </Text>
-          {sessionStatus === 'authenticated' && sessionUser ? (
-            <Surface padding="md" gap="sm" elevation="raised" radius="md">
-              <Text variant="body" weight="medium">
-                {sessionUser.firstName} {sessionUser.lastName}
-              </Text>
-              {sessionUser.username ? (
-                <Text variant="caption" tone="muted">
-                  @{sessionUser.username}
-                </Text>
-              ) : null}
-              <Text variant="caption" tone="muted">
-                用户 ID：{sessionUser.id}
-              </Text>
-              <Text variant="caption" tone="muted">
-                语言：{sessionUser.languageCode || '未知'}
-              </Text>
-              <Button variant="outline" onClick={handleLogout}>
-                退出登录
-              </Button>
-            </Surface>
-          ) : (
-            <Surface padding="md" gap="md" elevation="sunken" radius="md">
-              <Text variant="body" tone="muted">
-                登录后即可访问玩家资料、匹配与实时对战功能。
-              </Text>
-              {sessionError ? (
-                <Text variant="caption" tone="critical">
-                  {sessionError}
-                </Text>
-              ) : null}
-              <Button onClick={handleTelegramLogin} disabled={isInitializing}>
-                {isInitializing ? '登录中…' : '使用 Telegram 登录'}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setManualDialogOpen(true)}
-                disabled={isInitializing}
-              >
-                手动粘贴 initData
-              </Button>
-            </Surface>
-          )}
-          <Button
-            onClick={() => toggleContrast()}
-            variant="outline"
-            size="md"
-            accessibilityLabel="切换高对比度模式"
-          >
-            切换高对比度（当前：{isHighContrast ? '开启' : '关闭'}）
-          </Button>
-        </Surface>
+    <Layout.SafeArea background="surface">
+      <Layout.Screen maxWidth={1400}>
+        <AppHeader
+          orientation={ui.orientation}
+          aspectRatio={ui.aspectRatio}
+          safeArea={ui.safeArea}
+          currentScreen={ui.currentScreen}
+          onNavigate={setScreen}
+          onToggleContrast={() => toggleContrast()}
+          isHighContrast={isHighContrast}
+          sessionStatus={sessionStatus}
+          sessionUser={sessionUser}
+          onLogout={sessionStatus === 'authenticated' ? handleLogout : undefined}
+          onResetOnboarding={ui.onboardingCompleted ? resetOnboarding : undefined}
+        />
+        {sessionError && ui.currentScreen !== 'onboarding' ? (
+          <div style={{ color: 'var(--color-critical)', fontSize: 14 }}>会话异常：{sessionError}</div>
+        ) : null}
+        {renderedScreen}
+        {ui.currentScreen !== 'onboarding' ? (
+          <PrimaryNavigation
+            currentScreen={ui.currentScreen}
+            onNavigate={setScreen}
+            onOpenTutorial={() => setScreen('tutorial')}
+            disabled={isInitializing}
+            orientation={ui.orientation}
+          />
+        ) : null}
       </Layout.Screen>
+      <OrientationGuard
+        active={ui.landscapeRequired && ui.landscapeHintVisible}
+        orientation={ui.orientation}
+        recommended="landscape"
+        onContinue={() => setLandscapeHintVisible(false)}
+      />
       {manualDialogOpen ? (
         <Dialog
           title="粘贴 Telegram initData"
