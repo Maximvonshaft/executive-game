@@ -7,11 +7,19 @@ import { createLeaderboardSlice, type LeaderboardSlice } from './modules/leaderb
 import { createAnnouncementSlice, type AnnouncementSlice } from './modules/announcementSlice';
 import { createAISlice, type AISlice } from './modules/aiSlice';
 import { createRoomSlice, type RoomSlice } from './modules/roomSlice';
+import { createUISlice, type UISlice } from './modules/uiSlice';
 import { WebSocketManager } from '../lib/realtime/WebSocketManager';
 import { RoomDataLayer } from '../lib/realtime/RoomDataLayer';
 import { getRestClient } from './apiClient';
 
-export type GlobalState = SessionSlice & PlayerSlice & TaskSlice & LeaderboardSlice & AnnouncementSlice & AISlice & RoomSlice;
+export type GlobalState = SessionSlice &
+  PlayerSlice &
+  TaskSlice &
+  LeaderboardSlice &
+  AnnouncementSlice &
+  AISlice &
+  RoomSlice &
+  UISlice;
 
 function resolveRealtimeUrl() {
   if (typeof window === 'undefined') {
@@ -33,7 +41,8 @@ export const useGlobalStore = create<GlobalState>()(
     ...createLeaderboardSlice(set, get),
     ...createAnnouncementSlice(set, get),
     ...createAISlice(set, get),
-    ...createRoomSlice(set, get)
+    ...createRoomSlice(set, get),
+    ...createUISlice(set, get)
   }))
 );
 
