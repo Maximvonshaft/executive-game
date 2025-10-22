@@ -92,6 +92,7 @@ export function App() {
   }, [performAuthentication, toast]);
 
   const handleGuestExplore = useCallback(() => {
+    setHasCompletedOnboarding(true);
     setView('lobby');
   }, []);
 
