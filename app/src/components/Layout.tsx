@@ -25,18 +25,20 @@ function SafeArea({ children, background = 'default' }: SafeAreaProps) {
 
 type ScreenProps = PropsWithChildren<{
   maxWidth?: number;
+  gap?: keyof typeof spacingScale;
+  align?: 'center' | 'stretch';
 }>;
 
-function Screen({ children, maxWidth = 480 }: ScreenProps) {
+function Screen({ children, maxWidth = 1280, gap = 'xl', align = 'center' }: ScreenProps) {
   return (
     <main
       style={{
-        margin: '0 auto',
+        margin: align === 'center' ? '0 auto' : undefined,
         width: '100%',
         maxWidth,
         display: 'flex',
         flexDirection: 'column',
-        gap: `${spacingScale.lg}px`
+        gap: `${spacingScale[gap]}px`
       }}
     >
       {children}
