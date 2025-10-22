@@ -6,7 +6,7 @@ export type DialogAction = {
   id: string;
   label: string;
   tone?: 'primary' | 'critical';
-  onPress: () => void;
+  onPress: () => void | boolean | Promise<void | boolean>;
 };
 
 type DialogProps = PropsWithChildren<{
@@ -59,8 +59,26 @@ export function Dialog({ title, description, actions, onClose, children }: Dialo
               key={action.id}
               variant={action.tone === 'critical' ? 'outline' : 'primary'}
               onClick={() => {
-                action.onPress();
-                onClose();
+                try {
+                  const result = action.onPress();
+                  if (result instanceof Promise) {
+                    result
+                      .then((value) => {
+                        if (value !== false) {
+                          onClose();
+                        }
+                      })
+                      .catch((error) => {
+                        console.error('Dialog action failed', error);
+                      });
+                    return;
+                  }
+                  if (result !== false) {
+                    onClose();
+                  }
+                } catch (error) {
+                  console.error('Dialog action threw synchronously', error);
+                }
               }}
             >
               {action.label}

@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Executive Game Suite</title>
+  <!--
+    Core layout and styling live in css/style.css. You’ll find variables
+    defined there to tweak colours, spacing and other common aspects of
+    the interface. The JavaScript in js/app.js wires up navigation and
+    simple state transitions between pages.
+  -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- Phase 0: Login and onboarding -->
+  <div id="login-page" class="page">
+    <div class="login-overlay">
+      <div class="login-container">
+        <div class="login-ring"></div>
+        <h1 class="brand-name">Executive&nbsp;Game</h1>
+        <p class="tagline">The Game of Minds.</p>
+        <button id="login-btn" class="primary-btn">Login with Telegram</button>
+        <div id="login-error" class="error-message"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 1–8: Main application shell -->
+  <div id="app" class="hidden">
+    <nav id="main-nav">
+      <div class="nav-brand">Executive</div>
+      <ul class="nav-list">
+        <li data-target="hall-section" class="active">Hall</li>
+        <li data-target="match-section">Match</li>
+        <li data-target="board-section">Board</li>
+        <li data-target="result-section">Results</li>
+        <li data-target="replay-section">Replay</li>
+        <li data-target="ranking-section">Ranking</li>
+        <li data-target="profile-section">Profile</li>
+        <li data-target="tasks-section">Tasks</li>
+        <li data-target="social-section">Social</li>
+        <li data-target="ai-section">AI</li>
+        <li data-target="training-section">Training</li>
+        <li data-target="settings-section">Settings</li>
+        <li data-target="shop-section">Shop</li>
+      </ul>
+      <div class="nav-info">
+        <span id="user-rating" class="badge">IQ&nbsp;1200</span>
+        <span id="user-name">Player</span>
+      </div>
+    </nav>
+
+    <!-- Hall: browse and select a game to play -->
+    <section id="hall-section" class="content-section">
+      <h2>Game Hall</h2>
+      <p class="section-desc">Select a game to begin. Recently played and available games appear below.</p>
+      <div class="games-grid" id="games-grid"></div>
+    </section>
+
+    <!-- Match: waiting area while matchmaking occurs -->
+    <section id="match-section" class="content-section hidden">
+      <h2>Matching...</h2>
+      <div class="match-container">
+        <div class="match-ring"></div>
+        <p id="match-status">Looking for a match...</p>
+        <div class="match-info">
+          <span id="online-count">Online: --</span>
+          <span id="eta">ETA: --</span>
+        </div>
+        <button id="cancel-match-btn" class="secondary-btn">Cancel</button>
+      </div>
+    </section>
+
+    <!-- Board: realtime game play area -->
+    <section id="board-section" class="content-section hidden">
+      <h2>Game Board</h2>
+      <!--
+        The board wrapper will be populated dynamically based on the
+        selected game. See js/app.js for details. Each game type
+        defines its own layout (e.g. Dou Dizhu has three player areas
+        and a hand of cards, Texas Hold'em has seats around an oval
+        table with community cards, etc.).
+      -->
+      <div class="board-wrapper" id="board-wrapper"></div>
+      <!-- The exit button appears below the dynamic board -->
+      <div id="board-controls-wrapper" class="board-controls-wrapper hidden">
+        <button id="exit-room-btn" class="secondary-btn">Leave Game</button>
+      </div>
+    </section>
+
+    <!-- Results: show outcome of a match -->
+    <section id="result-section" class="content-section hidden">
+      <h2>Match Results</h2>
+      <div class="results-container">
+        <h3 id="result-title">Victory!</h3>
+        <p id="result-summary">You won by 2 points</p>
+        <div class="result-stats">
+          <div class="stat-card">
+            <span class="stat-label">Rating Change</span>
+            <span id="rating-change" class="stat-value">+15</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Coins Earned</span>
+            <span id="coins-earned" class="stat-value">+50</span>
+          </div>
+        </div>
+        <div class="result-actions">
+          <button id="play-again-btn" class="primary-btn">Play Again</button>
+          <button id="back-to-hall-btn" class="secondary-btn">Back to Hall</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Replay: review past games -->
+    <section id="replay-section" class="content-section hidden">
+      <h2>Game Replay</h2>
+      <div class="replay-container">
+        <div class="replay-board" id="replay-board"></div>
+        <div class="replay-controls">
+          <input id="replay-slider" type="range" min="0" max="100" value="0" />
+          <div class="replay-buttons">
+            <button id="replay-play-btn" class="primary-btn">Play</button>
+            <button id="replay-pause-btn" class="secondary-btn">Pause</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ranking: leaderboard and segments -->
+    <section id="ranking-section" class="content-section hidden">
+      <h2>Leaderboards</h2>
+      <div class="ranking-tabs">
+        <button class="tab-btn active" data-rank-target="rank-all">All Time</button>
+        <button class="tab-btn" data-rank-target="rank-week">Last 7 Days</button>
+        <button class="tab-btn" data-rank-target="rank-month">Last 30 Days</button>
+      </div>
+      <div id="rank-all" class="ranking-table active"></div>
+      <div id="rank-week" class="ranking-table hidden"></div>
+      <div id="rank-month" class="ranking-table hidden"></div>
+    </section>
+
+    <!-- Profile: user information and history -->
+    <section id="profile-section" class="content-section hidden">
+      <h2>Your Profile</h2>
+      <div class="profile-header">
+        <div class="avatar"></div>
+        <div class="profile-info">
+          <h3 id="profile-name">Player</h3>
+          <p id="profile-rating">IQ: 1200</p>
+          <p id="profile-streak">Win Streak: 3</p>
+        </div>
+      </div>
+      <div class="profile-history">
+        <h3>Recent Matches</h3>
+        <ul id="history-list"></ul>
+      </div>
+    </section>
+
+    <!-- Tasks: daily goals and achievements -->
+    <section id="tasks-section" class="content-section hidden">
+      <h2>Daily Tasks &amp; Achievements</h2>
+      <div id="tasks-list" class="tasks-list"></div>
+    </section>
+
+    <!-- Social: friends and opponents -->
+    <section id="social-section" class="content-section hidden">
+      <h2>Social</h2>
+      <div class="social-tabs">
+        <button class="tab-btn active" data-social-target="friends-list">Friends</button>
+        <button class="tab-btn" data-social-target="recent-list">Recent</button>
+        <button class="tab-btn" data-social-target="blocked-list">Blocked</button>
+      </div>
+      <div id="friends-list" class="social-table active"></div>
+      <div id="recent-list" class="social-table hidden"></div>
+      <div id="blocked-list" class="social-table hidden"></div>
+    </section>
+
+    <!-- AI: practice and suggestions -->
+    <section id="ai-section" class="content-section hidden">
+      <h2>AI Practice</h2>
+      <div class="ai-container">
+        <div class="ai-board" id="ai-board"></div>
+        <div class="ai-suggestions" id="ai-suggestions">
+          <h3>Suggestions</h3>
+          <ul></ul>
+        </div>
+        <button id="ai-suggest-btn" class="primary-btn">Get Suggestion</button>
+      </div>
+    </section>
+
+    <!-- Training: tutorial and puzzle mode -->
+    <section id="training-section" class="content-section hidden">
+      <h2>Training &amp; Tutorials</h2>
+      <div id="training-list" class="training-list"></div>
+    </section>
+
+    <!-- Settings: accessibility and preferences -->
+    <section id="settings-section" class="content-section hidden">
+      <h2>Settings</h2>
+      <div class="settings-option">
+        <label for="language-select">Language</label>
+        <select id="language-select">
+          <option value="en">English</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
+      <div class="settings-option">
+        <label for="contrast-toggle">High Contrast</label>
+        <input type="checkbox" id="contrast-toggle" />
+      </div>
+      <div class="settings-option">
+        <label for="animations-toggle">Animations</label>
+        <input type="checkbox" id="animations-toggle" checked />
+      </div>
+    </section>
+
+    <!-- Shop: skins and items -->
+    <section id="shop-section" class="content-section hidden">
+      <h2>Shop</h2>
+      <div id="shop-items" class="shop-grid"></div>
+    </section>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
