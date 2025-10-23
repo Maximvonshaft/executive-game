@@ -36,7 +36,12 @@ export function App() {
 
   const [view, setView] = useState<ViewState>('onboarding');
   const [gameMode, setGameMode] = useState<GameArenaMode>('doudizhu-ranked');
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    return window.sessionStorage.getItem('executive-game/guest-explored') === '1';
+  });
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
   const isInitializing = useMemo(
@@ -140,6 +145,17 @@ export function App() {
   }, [clearSession, toast]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (hasCompletedOnboarding) {
+      window.sessionStorage.setItem('executive-game/guest-explored', '1');
+    } else {
+      window.sessionStorage.removeItem('executive-game/guest-explored');
+    }
+  }, [hasCompletedOnboarding]);
+
+  useEffect(() => {
     initializeSession().catch((error) => {
       toast.present({
         title: '初始化失败',
@@ -164,8 +180,18 @@ export function App() {
       if (view === 'onboarding' && hasCompletedOnboarding) {
         setView('lobby');
       }
-    } else if (sessionStatus === 'anonymous' && !hasCompletedOnboarding) {
-      setView('onboarding');
+      return;
+    }
+
+    if (sessionStatus === 'anonymous') {
+      if (hasCompletedOnboarding) {
+        if (view === 'onboarding') {
+          setView('lobby');
+        }
+        return;
+      }
+
+      setView((previous) => (previous === 'onboarding' ? previous : 'onboarding'));
     }
   }, [sessionStatus, view, hasCompletedOnboarding]);
 
