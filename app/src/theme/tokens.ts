@@ -61,6 +61,11 @@ export const typographyScale = {
     lineHeight: 16,
     letterSpacing: 0.1
   },
+  subtitle: {
+    fontSize: 16,
+    lineHeight: 24,
+    letterSpacing: 0
+  },
   body: {
     fontSize: 14,
     lineHeight: 20,
