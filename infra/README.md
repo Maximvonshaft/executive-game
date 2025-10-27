@@ -57,8 +57,8 @@ infra/
 
 ## 6. 后续任务
 
-* [ ] 创建实际的 Terraform 模块代码。
-* [ ] 编写 `scripts/plan-and-apply.sh` 自动化脚本。
+* [x] 创建 Terraform 模块骨架与环境目录（PostgreSQL、Redis、对象存储、CI 角色）。
+* [x] 编写 `scripts/plan-and-apply.sh` 自动化脚本。
 * [ ] 将 AWS/Aliyun/GCP 凭证管理方案补充到 `ops/security.md`。
 
 最后更新：2024-05-28。

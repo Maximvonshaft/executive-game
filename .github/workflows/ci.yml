@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_HOME: ~/.local/share/pnpm
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm install --frozen-lockfile
+
+      - name: Run lint
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm lint
+
+      - name: Run unit tests
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm test
+
+      - name: Run e2e tests
+        if: hashFiles('pnpm-lock.yaml') != ''
+        run: pnpm test:e2e
+
+      - name: Placeholder notification
+        if: hashFiles('pnpm-lock.yaml') == ''
+        run: |
+          echo "pnpm-lock.yaml 未找到，CI 跳过 lint/test/test:e2e。"
+          echo "待前端/服务端代码落地后补充实际命令。"
+
+  build-artifacts:
+    name: Multi-platform build placeholders
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Report status
+        run: |
+          echo "TODO: 在客户端工程落地后补齐小游戏 / Telegram / H5 构建流程。"
+          echo "当前任务仅作为骨架，确保 GitHub Actions 目录存在。"

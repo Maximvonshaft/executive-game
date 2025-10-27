@@ -44,8 +44,8 @@
 
 ### 0.8 工程与运维
 
-* **基础设施模板**：`infra/terraform` 模块提供 Redis/PostgreSQL/MinIO 在开发、预发、生产的配置，`.env.example` 已覆盖必要变量。要求每位开发者使用 `direnv` 管理环境变量，避免手动切换。
-* **CI/CD**：首轮 GitHub Actions 工作流 `ci.yml` 已包含单测、端到端测试、Web 构建与多平台制品打包（小游戏、Telegram、H5），依赖的 Redis/PostgreSQL 通过服务容器提供。任何失败会自动通知 Slack。
+* **基础设施模板**：`infra/terraform` 目录已补齐开发/预发/生产的模块骨架（PostgreSQL、Redis、对象存储、CI 角色），并提供 `infra/scripts/plan-and-apply.sh` 统一执行入口；后续需按云厂商落地具体资源与 `.env.example` 中的凭证管理方案，同时保持 `direnv` 管理环境变量的要求。
+* **CI/CD**：首轮 GitHub Actions 工作流 `ci.yml` 已在仓库 `.github/workflows/` 目录落地骨架，当前针对 `pnpm-lock.yaml` 缺失场景提供占位提示；待客户端/服务端代码落地后需补齐 `pnpm lint`、`pnpm test`、`pnpm test:e2e` 的实际执行与多平台制品打包逻辑，保持 Slack 通知策略不变。
 
 ### 0.9 体验与性能
 
@@ -68,6 +68,10 @@
 * `proto/room-events.md`：权威房间事件协议，覆盖补帧策略与错误码清单。
 * `ops/telegram-deeplink.md`、`ops/checklists/telegram.md`：Telegram 深链参数与回归检查清单，支持运营与 QA 对齐。
 * `infra/README.md`：Terraform 目标结构与环境划分，明确后续基础设施交付步骤。
+* `docs/contracts/ws/samples/`：提供 Happy Path、重连与错误场景的 JSON Lines 样例，便于 QA/自动化脚本直接回放。
+* `.github/workflows/ci.yml`：GitHub Actions 骨架，当前在缺少 `pnpm-lock.yaml` 时输出占位提示，提醒后续补齐 lint/test/e2e 与制品构建。
+
+> 提醒：以上骨架/样例仍包含 TODO，须在 Linear 里程碑任务中追踪 Terraform 资源实现、凭证管理方案、契约代码生成脚手架与 CI 构建流程，确保在约定的 Milestone 前完成。
 
 后续若新增/调整文档，请同步更新本节并在 PR 描述中列明，以免引用失效。
 

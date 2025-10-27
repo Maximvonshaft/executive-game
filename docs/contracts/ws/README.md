@@ -47,8 +47,10 @@
 
 ## 4. Mock 建议
 
-1. QA 可使用 `ws-replay`（自研工具）或 `wscat` 重放 `samples/` 目录下的事件序列。
+1. QA 可使用 `ws-replay`（自研工具）或 `wscat` 重放 `samples/` 目录下的事件序列。目前已提供：
+   * `happy-path.jsonl`：从连接到结算的标准对局流程。
+   * `reconnect-and-errors.jsonl`：包含状态快照、错误回执与强制下线场景。
 2. Playwright 端到端测试中推荐将事件录制为 JSON Lines，模拟房间广播。
-3. 若协议调整，需同步更新 `proto/room-events.md` 与 `docs/contracts/openapi.yaml` 中引用的 Schema。
+3. 若协议调整，需同步更新 `proto/room-events.md` 与 `docs/contracts/openapi.yaml` 中引用的 Schema，并在此目录追加新的样例。
 
-最后更新：2024-05-28。
+最后更新：2024-06-01。
