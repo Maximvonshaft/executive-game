@@ -58,6 +58,19 @@
 * 数据库、Redis 与环境变量配置已按照计划文档第 26 章执行完成，验证命令 `pnpm dev:server`、`pnpm dev:client:h5`、`pnpm dev:telegram` 均可启动。
 * 日常流程明确：每个功能分支必须在提交前跑通 `pnpm lint`、`pnpm test`，并在主要功能点触发 `pnpm test:e2e` 以验证端到端链路。
 
+### 0.11 文档补齐记录（2024-05-28）
+
+为解决前期评审提出的“引用文档缺失”问题，本仓库已补充以下资料，所有成员应在开发前完成阅读：
+
+* `docs/architecture/modules.md`：客户端、服务端与基础设施模块职责划分，提供里程碑交付映射。
+* `docs/platform-auth.md`：各平台（微信/抖音小游戏、Telegram、H5）登录流程、互踢策略与风险兜底。
+* `docs/contracts/openapi.yaml` 与 `docs/contracts/ws/README.md`：REST 与 WebSocket 契约初版，可直接用于代码生成与 QA Mock。
+* `proto/room-events.md`：权威房间事件协议，覆盖补帧策略与错误码清单。
+* `ops/telegram-deeplink.md`、`ops/checklists/telegram.md`：Telegram 深链参数与回归检查清单，支持运营与 QA 对齐。
+* `infra/README.md`：Terraform 目标结构与环境划分，明确后续基础设施交付步骤。
+
+后续若新增/调整文档，请同步更新本节并在 PR 描述中列明，以免引用失效。
+
 ---
 
 > 目标：基于 **Phaser 3 + TypeScript** 在「小程序（微信/抖音）」、**Telegram WebApp** 与 **H5** 同构交付一套斗地主游戏，支持 **单机（AI 对战）** 与 **联机实时对战（3 人）**，具备匹配、断线重连、观战、复盘与基础排位功能。方案聚焦工程可落地，兼顾多平台快速迭代与运维效率。
