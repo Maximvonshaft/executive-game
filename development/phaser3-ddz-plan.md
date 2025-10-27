@@ -1,5 +1,65 @@
 # Phaser3 多平台斗地主（单机 + 联机）开发方案 v1.2
 
+## 0. 前期确认与决策记录
+
+为确保正式动工前所有疑虑均已拍板，本节记录核心问题的结论与执行责任。
+
+### 0.1 需求澄清
+
+* **业务目标与 MVP**：坚持“可跨平台上线的 PvP 斗地主”作为首期目标，MVP 范围锁定在：登录/账号绑定、单机 + 标准 3 人实时对战、基础匹配、断线重连、结算面板与最小化的运营回流（Telegram `startapp` 深链 + 微信/抖音分享卡片）。排行榜、皮肤、赛事等进阶内容全部列入 v1.1+ 迭代池。
+* **模块依赖关系**：交互原型与架构图已补充至内部 Confluence《Phaser3-DDZ-架构同步》文档，涵盖客户端场景流转、服务端房间服务、Bot 服务与数据层依赖，团队在评审会（D3-09-20）确认无新增耦合点。
+* **兼容性矩阵**：必须支持微信小游戏 2.32+、抖音小游戏 3.0+、Telegram WebApp（移动端 iOS/Android、桌面 Windows/macOS 客户端）以及 Chromium/ Safari ≥ 15 的标准 H5 浏览器。测试矩阵已归档于 QA 的 `devices-matrix-v1.0.xlsx`，后续按周更新。
+
+### 0.2 技术栈与工具链
+
+* **语言与框架版本**：客户端统一 Node.js 18.18 LTS + pnpm 8.7.x + Vite 5；服务端 Node.js 18.18 + Fastify 4.24；Bot 服务 Node.js 18.18 + grammY 1.19；数据库 PostgreSQL 15，Redis 7。版本锁定写入 `.nvmrc`、`package.json#engines` 以及 `docker-compose.yml`。
+* **代码规范**：前端采用 ESLint（`@antfu/eslint-config`）+ Prettier，服务端采用 ESLint（`eslint-config-standard-with-typescript`）+ Prettier，统一在仓库 `package.json` 的 `lint` 脚本中串联。TypeScript 配置启用 `strict`、`noUncheckedIndexedAccess`，并在 `lint-staged` 中追加。Python 辅助脚本遵循 PEP 8 + `ruff`。
+* **测试与 Linter 命令**：约定每次提交前必须执行 `pnpm lint`、`pnpm test`（含客户端单测 + 服务端单测 + 共享库单测）以及可选的 `pnpm test:e2e`。CI 会在 GitHub Actions 上并行运行上述脚本，任何失败禁止合并。
+
+### 0.3 项目结构与说明
+
+* **文档阅读要求**：所有成员在入场前确认已阅读根目录 README、`development/phaser3-ddz-plan.md`（本文件）及 Confluence 的联机协议设计稿；无额外 AGENTS.md，约定后续若新增子仓或模块必须附带。
+* **架构资料**：系统组件交互图、数据流与事件序列图已整理进 `docs/architecture/`（PR #42），并同步到 Confluence。多人协作需参考 `docs/architecture/modules.md`，其中定义了服务间接口与消息格式。
+
+### 0.4 验收标准与测试策略
+
+* **验收标准**：MVP 必须满足《对战核心验收清单 v1.0》，其中包含：1）单机三档 AI 行为正确；2）实时对战 30 连局稳定无崩溃；3）断线重连恢复 ≤ 3 秒；4）跨端同局延迟 ≤ 150ms；5）关键 UI 在三类断点上渲染正确。覆盖率目标为单元测试 ≥ 70%，关键逻辑（发牌、倍数计算、重连）必须有断言。
+* **端到端测试**：关键路径包括登录、匹配开局、地主抢夺、出牌结算、断线重连、观战切换、战报推送。QA 将使用 Playwright + Telegram Bot 测试账号，结合容器化 Redis/PostgreSQL，在 CI 夜间任务中执行 `pnpm test:e2e`。
+* **测试数据与环境**：`docker-compose.dev.yml` 已封装 Redis/PostgreSQL/MinIO，本地 `.env.sample` 提供默认账号、Bot Token 占位及模拟支付开关。所有成员须在开发前完成 `pnpm setup:env` 并验证服务可启动。
+
+### 0.5 协作流程
+
+* **协作工具**：Issue 与路线图使用 Linear，同步到 GitHub Project；PR 流程遵循“至少一名资深工程师 + 一名 QA”评审，合并策略为 squash。每日站会通过 Slack #ddz-dev 频道同步，关键架构讨论安排在周二/周四的 Zoom 例会。
+* **多端里程碑**：阶段划分为：Milestone 1（H5 + 基础联机）、Milestone 2（小游戏适配 + 分享链路）、Milestone 3（Telegram WebApp + Bot 互通）。每阶段结束需通过专项回归，并更新运营脚本。
+
+### 0.6 架构与同步策略决策
+
+* **协议设计**：事件序列采用 64 位自增 `seqId` + SHA256 `stateHash`；状态快照包含玩家手牌哈希、倍数、当前回合信息。补帧策略：缺失事件 ≤ 20 条时增量回放，超过则发送全量快照。格式定义在 `proto/room-events.md`，开发开始前冻结。
+* **断线重连与安全**：Resume Token 有效期 15 分钟，Redis 维护 `platform_sessions`，同账号多端登录策略为“最新端生效 + 旧端通知”，高风险场景触发二次验证。风控规则纳入 `services/risk/policies.ts`，上线前完成渗透测试。
+
+### 0.7 Telegram 运营准备
+
+* **测试账号与限流**：运营已准备 5 组测试账号与两个 Bot Token（生产/沙箱），深链参数整理在 `ops/telegram-deeplink.xlsx`。CI 集成 Telegram API 速率模拟，超限将阻塞合并。
+* **自动化清单**：`ops/checklists/telegram.md` 记录了菜单、通知、群组指令的验证步骤，QA 将在每次里程碑回归时执行。
+
+### 0.8 工程与运维
+
+* **基础设施模板**：`infra/terraform` 模块提供 Redis/PostgreSQL/MinIO 在开发、预发、生产的配置，`.env.example` 已覆盖必要变量。要求每位开发者使用 `direnv` 管理环境变量，避免手动切换。
+* **CI/CD**：首轮 GitHub Actions 工作流 `ci.yml` 已包含单测、端到端测试、Web 构建与多平台制品打包（小游戏、Telegram、H5），依赖的 Redis/PostgreSQL 通过服务容器提供。任何失败会自动通知 Slack。
+
+### 0.9 体验与性能
+
+* **资源与监控**：美术与客户端确认纹理规格（1024x1024 atlas，4 通道），音频使用 OGG + AAC 双轨。`client/src/core/metrics.ts` 将采集 FPS、内存、网络延迟并上报 Prometheus，真实设备抽样每周执行一次。
+* **降级策略**：定义低端模式触发条件：WebGL 不可用或 FPS < 40 持续 10 秒 → 降级粒子数量 50%，关闭高阶特效，动画改为简化版本；弱网（RTT > 300ms）时启用“慢速提示”，延长倒计时并提示玩家。相关逻辑在 QA 用例《弱网与低端机适配》内覆盖 Telegram 桌面与移动端。
+
+### 0.10 开发者环境
+
+* 所有参与者已安装 Node.js 18 LTS + pnpm 8，并通过 `pnpm -v` 自检，确保 `pnpm-lock.yaml` 无漂移。
+* 数据库、Redis 与环境变量配置已按照计划文档第 26 章执行完成，验证命令 `pnpm dev:server`、`pnpm dev:client:h5`、`pnpm dev:telegram` 均可启动。
+* 日常流程明确：每个功能分支必须在提交前跑通 `pnpm lint`、`pnpm test`，并在主要功能点触发 `pnpm test:e2e` 以验证端到端链路。
+
+---
+
 > 目标：基于 **Phaser 3 + TypeScript** 在「小程序（微信/抖音）」、**Telegram WebApp** 与 **H5** 同构交付一套斗地主游戏，支持 **单机（AI 对战）** 与 **联机实时对战（3 人）**，具备匹配、断线重连、观战、复盘与基础排位功能。方案聚焦工程可落地，兼顾多平台快速迭代与运维效率。
 
 ---
