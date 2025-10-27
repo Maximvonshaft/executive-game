@@ -1,0 +1,11 @@
+{"event":"WELCOME","seqId":0,"serverTime":"2024-05-28T03:22:12.000Z","sessionId":"sess_123"}
+{"event":"MATCH_FOUND","seqId":1,"roomId":"room_10001","seat":1,"players":[{"uid":"u1","nickname":"玩家1"},{"uid":"u2","nickname":"玩家2"},{"uid":"u3","nickname":"玩家3"}]}
+{"event":"GAME_START","seqId":2,"roomId":"room_10001","landlord":2,"hands":{"1":["3H","3D"],"2":["4S","4H"],"3":["5C","5D"]}}
+{"event":"TURN_START","seqId":3,"currentSeat":2,"timeoutMs":20000}
+{"event":"PLAY_ACTION","seqId":4,"seat":2,"cards":["4S","4H"],"pattern":"PAIR"}
+{"event":"TURN_START","seqId":5,"currentSeat":3,"timeoutMs":20000}
+{"event":"PLAY_ACTION","seqId":6,"seat":3,"cards":["PASS"],"pattern":"PASS"}
+{"event":"TURN_START","seqId":7,"currentSeat":1,"timeoutMs":20000}
+{"event":"PLAY_ACTION","seqId":8,"seat":1,"cards":["3H","3D"],"pattern":"PAIR"}
+{"event":"ROUND_RESULT","seqId":9,"winner":1,"scoreDelta":3}
+{"event":"GAME_RESULT","seqId":100,"roomId":"room_10001","result":"LANDLORD_WIN","multiplier":2,"rewards":[{"uid":"u2","score":120},{"uid":"u1","score":-60},{"uid":"u3","score":-60}]}

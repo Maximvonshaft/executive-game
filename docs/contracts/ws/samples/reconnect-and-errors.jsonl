@@ -1,0 +1,4 @@
+{"event":"WELCOME","seqId":0,"serverTime":"2024-05-28T04:00:00.000Z","sessionId":"sess_reconnect"}
+{"event":"STATE_SNAPSHOT","seqId":120,"roomId":"room_20002","stateHash":"abc123","players":["u8","u9","u10"],"currentSeat":3}
+{"event":"ERROR","seqId":121,"code":"INVALID_ACTION","message":"Card pattern does not follow the previous play"}
+{"event":"FORCE_LOGOUT","seqId":122,"reason":"SESSION_CONFLICT","platform":"TELEGRAM_WEBAPP"}
