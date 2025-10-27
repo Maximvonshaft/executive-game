@@ -175,6 +175,7 @@ client/
 * 微信/抖音：客户端 `wx.login`/`tt.login` → REST 换取 `token`（会话密钥 + 后台 JWT）→ 建立 WS → `HELLO` 握手 → 进入大厅。
 * Telegram：WebApp 启动时获取 `initData`，客户端携带签名串调用 REST `POST /auth/telegram` → 通过 Bot Token 校验签名 → 签发 JWT/重连 token → 建立 WS → `HELLO`（附 `platform=telegram` 与 `tg_user_id`）。
 * H5：OAuth/手机号登录获取 JWT → `HELLO`。
+* 所有登录态在 REST 返回时附带 `resumeToken`（15 分钟有效，Redis + `platform_sessions` 双写），客户端在握手时回传；服务端在 `WELCOME`/`STATE_SNAP` 内同步最新 `resumeToken` 与 `expiresAt`，提前 60 秒轮换并更新 `platform_sessions.rotated_at`。
 
 ### 6.2 匹配
 
@@ -193,7 +194,8 @@ client/
 
 ### 6.4 断线重连
 
-* 客户端 `RESUME{roomId, lastSeq}` → 服务器回放 `[lastSeq+1..now]`，附最新 `STATE_HASH`，客户端对齐或全量替换。
+* 客户端 `RESUME{roomId, lastSeq, resumeToken}` → 服务器校验 token（Redis + `platform_sessions`）后回放 `[lastSeq+1..now]`，附最新 `STATE_HASH` 与可能的增量 `resumeToken`，客户端对齐或全量替换。
+* 令牌续期：当连接持续超过 10 分钟或 token 剩余有效期 < 60 秒，服务器通过 `RESUME_TOKEN{resumeToken, expiresAt}` 主动推送并刷新 `platform_sessions.resume_token`；客户端需立刻持久化并用于后续 `RESUME/STATE_REQ`。
 
 ### 6.5 观战与复盘（迭代）
 
@@ -215,6 +217,26 @@ client/
 
 * 入参：`lastPlay`（为空则自由出牌）与 `candidate`；
 * 规则：相同牌型且 `rankKey` 更大，炸弹/王炸特权覆盖，长度一致性校验。
+
+### 7.3 排位 MMR 计算
+
+* **初始值与段位映射**：所有新账号以 `MMR=1200` 起步，对应青铜段位；每 200 分切一档用于客户端展示。赛季初对历史玩家按照 `MMR = floor(oldMMR * 0.8 + 200)` 软重置，避免通胀。
+* **K 系数**：
+  * 前 30 局使用 `K=40` 加快收敛；
+  * 正常阶段 `K=28`；
+  * 高段位（MMR ≥ 2000）衰减为 `K=16`，同时若对局炸弹/春天事件触发额外 ±4 浮动。
+* **胜率预估**：地主视为单人，农民取平均 MMR 并减去 60 分的合作优势偏置：
+
+  ```text
+  E_landlord = 1 / (1 + 10^((mmr_farmers - (mmr_landlord - 60)) / 400))
+  E_farmers = 1 - E_landlord
+  ```
+
+* **分配规则**：
+  * 地主胜利：`ΔMMR_landlord = K * (1 - E_landlord)`；农民各自 `ΔMMR_farmer = K * (0 - E_farmers) / 2`。
+  * 农民胜利：`ΔMMR_landlord = K * (0 - E_landlord)`；农民各自 `ΔMMR_farmer = K * (1 - E_farmers) / 2`。
+  * 托管或提前逃跑的玩家额外扣除 10 分并记录逃跑计数，连续逃跑会触发匹配惩罚（匹配池降权并加入冷却）。
+* **统计落库**：`matches.mmr_snapshot`（见拓展字段）记录对局前双方 MMR，`match_players.score_change` 存储 ΔMMR；`leaderboard` 表内维护累计 MMR、胜败、连胜。服务端每日离线作业基于 `match_players(created_at)` 聚合近期走势，供排行榜与风控使用。
 
 ---
 
@@ -257,7 +279,8 @@ matches(
   ended_at timestamptz,
   mode varchar(16) NOT NULL,
   seed bigint NOT NULL,
-  replay_ref text
+  replay_ref text,
+  mmr_snapshot jsonb
 )
 
 match_players(
@@ -268,6 +291,7 @@ match_players(
   role varchar(16) NOT NULL,
   score_change int NOT NULL,
   is_win boolean NOT NULL,
+  created_at timestamptz DEFAULT now(),
   UNIQUE (match_id, seat),
   UNIQUE (match_id, user_id)
 )
@@ -290,16 +314,50 @@ leaderboard(
   losses int NOT NULL,
   streak int NOT NULL,
   updated_at timestamptz DEFAULT now()
-)
+),
+
+platform_identities(
+  id bigserial PRIMARY KEY,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  provider varchar(16) NOT NULL,
+  external_id text NOT NULL,
+  union_id text,
+  display_name text,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE (provider, external_id),
+  UNIQUE (user_id, provider)
+),
 
 platform_sessions(
   id bigserial PRIMARY KEY,
   user_id uuid REFERENCES users(id) ON DELETE CASCADE,
-  platform varchar(16) NOT NULL,
+  provider varchar(16) NOT NULL,
   session_key text NOT NULL,
+  resume_token text,
+  issued_at timestamptz DEFAULT now(),
   expires_at timestamptz NOT NULL,
-  UNIQUE (user_id, platform)
-)
+  rotated_at timestamptz,
+  UNIQUE (user_id, provider)
+),
+
+refresh_tokens(
+  id bigserial PRIMARY KEY,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  token_hash text UNIQUE NOT NULL,
+  issued_at timestamptz DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  metadata jsonb
+),
+
+staff_accounts(
+  id uuid PRIMARY KEY,
+  email text UNIQUE NOT NULL,
+  display_name text,
+  role varchar(16) NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  disabled_at timestamptz
+),
 
 login_audit(
   id bigserial PRIMARY KEY,
@@ -321,7 +379,7 @@ reports(
   description text,
   evidence jsonb,
   status varchar(16) DEFAULT 'pending',
-  handled_by uuid,
+  handled_by uuid REFERENCES staff_accounts(id) ON DELETE SET NULL,
   handled_at timestamptz
 )
 
@@ -330,18 +388,22 @@ account_links(
   user_id uuid REFERENCES users(id) ON DELETE CASCADE,
   provider varchar(16) NOT NULL,
   external_id text NOT NULL,
-  UNIQUE (provider, external_id)
+  created_at timestamptz DEFAULT now(),
+  UNIQUE (provider, external_id),
+  UNIQUE (user_id, provider)
 )
 ```
 
 * 索引策略：
   * `matches(mode, started_at DESC)`、`turns(match_id, seq)`、`match_players(user_id, created_at)`（物化视图或按需触发器）提升排行榜、战绩查询效率。
   * `users(platform, created_at)`、`login_audit(user_id, created_at DESC)` 支撑风控分析。
+  * `platform_sessions(resume_token)`、`refresh_tokens(token_hash)`、`platform_identities(provider, external_id)` 保障续期/吊销与登录态查找效率。
   * `reports(status, created_at)` 与 `reports(match_id)` 便于客服检索。
-* 约束策略：所有外键均启用 `ON DELETE` 级联或置空，避免孤儿记录；`match_players.role` 与 `reports.reason` 采用 ENUM 或 CHECK 约束限制取值。
+* 约束策略：所有外键均启用 `ON DELETE` 级联或置空，避免孤儿记录；`match_players.role` 与 `reports.reason` 采用 ENUM 或 CHECK 约束限制取值；`handled_by` 仅允许引用 `staff_accounts`。
 * 回放存储：`turns` 表保留结构化事件，同时在对象存储按 `replay_ref` 落库压缩事件流，结合 `match_id` 建立 CDN 缓存。
 * 数据归档：超过 90 天的 `matches`/`turns` 归档到冷存储表（`matches_archive`），通过分区表实现；活跃排行榜数据在 `leaderboard` 表内滚动更新。
-* 迁移策略：使用 Prisma Migrate 或 Knex 维护版本化迁移，PR 内要求附带迁移脚本；建立 `schema_migrations` 表记录版本，CI 中运行 `pnpm db:migrate --env test` 验证；提供 `pnpm db:rollback` 允许快速回滚。
+* 迁移策略：MVP 阶段统一使用 **Prisma Migrate** 维护版本化迁移（生成 SQL + 校验），Knex 仅作为后续扩展选项；PR 内要求附带迁移脚本；建立 `schema_migrations` 表记录版本，CI 中运行 `pnpm db:migrate --env test` 验证；提供 `pnpm db:rollback` 允许快速回滚。
+* 表职责划分：`platform_identities` 保存平台提供的原始身份标识（openid/unionid/telegram_id 等），`platform_sessions` 记录短期凭证与 `resume_token` 轮换信息；`account_links` 面向跨平台绑定（如一个用户绑定多个渠道账号），由业务操作显式写入，避免与平台原生身份冲突。
 
 ### 9.1 数据一致性与锁策略
 
@@ -363,9 +425,10 @@ account_links(
 
 | 路由 | 方法 | 请求体 | 响应体 | 说明 |
 | --- | --- | --- | --- | --- |
-| `/auth/login` | POST | `{ platform: 'wechat' \| 'tiktok' \| 'web', code?: string, phone?: string, otp?: string }` | `{ token: string, refreshToken: string, expiresIn: number }` | 微信/抖音通过 `code` 置换 session，H5 支持手机号 + OTP。 |
-| `/auth/telegram` | POST | `{ initData: string, hash: string }` | `{ token, refreshToken, expiresIn, telegramId, isNew }` | 校验 Telegram 签名，`isNew=true` 触发首次绑定流程。 |
-| `/auth/refresh` | POST | `{ refreshToken: string }` | `{ token, expiresIn }` | 刷新 JWT，失败返回 `401/invalid_token`。 |
+| `/auth/login` | POST | `{ platform: 'wechat' \| 'tiktok' \| 'web' \| 'guest', code?: string, phone?: string, otp?: string }` | `{ token: string, refreshToken: string, resumeToken: string, expiresIn: number, refreshExpiresIn: number }` | 微信/抖音通过 `code` 置换 session，H5 支持手机号 + OTP；`platform='guest'` 返回 24 小时有效的游客身份。 |
+| `/auth/migrate` | POST | `Authorization: Bearer <guest token>`, Body `{ platform: 'wechat' \| 'tiktok' \| 'web', code?: string, phone?: string, otp?: string }` | `{ token, refreshToken, resumeToken, expiresIn, refreshExpiresIn }` | 游客升级为实名账号，沿用原有战绩与资产，成功后游客 token 立即失效。 |
+| `/auth/telegram` | POST | `{ initData: string, hash: string }` | `{ token, refreshToken, resumeToken, expiresIn, refreshExpiresIn, telegramId, isNew }` | 校验 Telegram 签名，`isNew=true` 触发首次绑定流程。 |
+| `/auth/refresh` | POST | `{ refreshToken: string }` | `{ token, expiresIn, resumeToken, resumeExpiresIn }` | 刷新 JWT，失败返回 `401/invalid_token`。 |
 | `/auth/logout` | POST | `Authorization: Bearer <token>` | `204 No Content` | 服务端吊销 refresh token，触发设备互踢。 |
 | `/profile` | GET | Header `Authorization` | `{ user, stats, settings }` | 返回头像、昵称、MMR、货币、设置。 |
 | `/profile` | PATCH | `{ nickname?, avatar?, settings? }` | `{ user }` | 修改资料，敏感字段（昵称）走审核队列。 |
@@ -385,7 +448,7 @@ account_links(
 | 事件 | 方向 | 数据结构 | 描述 |
 | --- | --- | --- | --- |
 | `HELLO` | C→S | `{ token: string, platform: string, resumeToken?: string }` | 握手，支持断线重连。 |
-| `WELCOME` | S→C | `{ serverTs: number, user: MinimalProfile, room?: RoomState }` | 返回服务器时间戳与房间状态。 |
+| `WELCOME` | S→C | `{ serverTs: number, user: MinimalProfile, room?: RoomState, resumeToken: string, resumeExpiresAt: number }` | 返回服务器时间戳、房间状态与最新重连令牌。 |
 | `MATCH_JOIN` | C→S | `{ mode: 'rank' \| 'casual', mmr: number }` | 加入匹配队列。 |
 | `MATCH_CANCEL` | C→S | `{} 或 { reason }` | 取消匹配，服务端广播 `MATCH_CANCELLED`。 |
 | `MATCH_FOUND` | S→C | `{ roomId, players: PlayerSlot[], estimatedWaitMs }` | 匹配成功，准备进入房间。 |
@@ -396,15 +459,18 @@ account_links(
 | `PLAY_EVT` | S→C | `{ seq, seat, cards, type, bombMultiplier }` | 广播出牌。 |
 | `PASS` | C→S | `{ seq }` | 过牌。 |
 | `PASS_EVT` | S→C | `{ seq, seat }` | 广播过牌。 |
-| `STATE_SNAP` | S→C | `{ seq, hash, publicState, playerState? }` | 定期全量同步（断线重连也使用）。 |
+| `STATE_SNAP` | S→C | `{ seq, hash, publicState, playerState?, resumeToken?, resumeExpiresAt? }` | 定期全量同步（断线重连也使用），必要时附带新的重连令牌。 |
+| `STATE_REQ` | C→S | `{ roomId, sinceSeq, resumeToken }` | 客户端检测到序号缺口时主动请求补帧。 |
+| `STATE_RESYNC` | S→C | `{ roomId, events: Event[], state, resumeToken?, resumeExpiresAt? }` | 针对 `STATE_REQ` 或快速补帧的响应，附增量事件与必要的令牌刷新。 |
 | `GAME_END` | S→C | `{ roomId, results: PlayerResult[], mmrDelta, rewards }` | 对局结果。 |
 | `RESUME` | C→S | `{ roomId, lastSeq, resumeToken }` | 断线重连请求。 |
-| `RESUME_OK` | S→C | `{ roomId, events: Event[], state }` | 重放缺失事件并提供最新状态。 |
+| `RESUME_OK` | S→C | `{ roomId, events: Event[], state, resumeToken?, resumeExpiresAt? }` | 重放缺失事件并提供最新状态，可能刷新令牌。 |
+| `RESUME_TOKEN` | S→C | `{ resumeToken, resumeExpiresAt }` | 在会话长连或令牌即将过期时主动续发。 |
 | `KICKED` | S→C | `{ reason, platform }` | 多端互踢或违规。 |
 | `PING`/`PONG` | 双向 | `{ ts }` | 心跳。 |
 
 **事件时序约束**：
-* 所有事件带 `seq` 自增，客户端本地维护 `lastAckSeq`，出现跳号时触发 `STATE_REQ` 主动请求补帧。
+* 所有事件带 `seq` 自增，客户端本地维护 `lastAckSeq`，出现跳号时触发 `STATE_REQ{sinceSeq}`，服务器以 `STATE_RESYNC` 回传缺失事件或直接下发 `STATE_SNAP`。`STATE_REQ` 必须携带最近的 `resumeToken` 以防止恶意刷帧。
 * 服务器对超时玩家在 `TURN_BEGIN.remainMs` 到期后自动发送 `AUTO_PASS_EVT` 或 `AUTO_PLAY_EVT`，并标记托管。
 * 断线重连时若 `resumeToken` 过期，返回 `RESUME_FAIL{code='TOKEN_EXPIRED'}`，客户端需重新登录。
 
@@ -435,6 +501,7 @@ account_links(
 * **举报入口**：在对局内玩家头像、结算面板以及战绩页面提供举报按钮，支持作弊、辱骂、外挂等分类，必要时附聊天截图/录像引用。
 * **跨平台表单**：小游戏使用原生弹窗提交，Telegram/H5 通过 WebApp 表单 + Bot `sendMessage` 兜底；所有举报写入 `reports` 表并生成工单号。
 * **客服流转**：集成 Zendesk/Freshdesk 或自建客服后台，自动将举报推送至客服队列，支持状态更新、备注、处理结果。
+* **客服账号管理**：客服/运营账号统一落在 `staff_accounts`，支持角色（reviewer/admin）与禁用标记；工单处理时写入 `reports.handled_by` 并记录 `handled_at`，账号删除时通过外键自动置空。
 * **反馈回传**：处理完成后通过站内信、小程序模板消息或 Bot 私聊通知玩家结果，严重违规同步全平台封禁并触发风控日志。
 * **数据监控**：统计举报量、平均响应时间、有效率，纳入指标看板；对高频违规账号自动触发二次审核或 AI 风控。
 
@@ -516,7 +583,8 @@ enum Platform {
   WeChat = 'wechat',
   TikTok = 'tiktok',
   Telegram = 'telegram',
-  Guest = 'guest'
+  Web = 'web',
+  Guest = 'guest',
 }
 
 export type ComboType =
@@ -535,8 +603,12 @@ export interface WsEvent<T=any> { type: string; seq: number; data: T }
 
 export interface AuthPayload {
   token: string;
+  refreshToken: string;
+  resumeToken: string;
   platform: Platform;
   expiresIn: number;
+  refreshExpiresIn: number;
+  resumeExpiresIn: number;
 }
 ```
 
@@ -592,7 +664,7 @@ export interface AuthPayload {
 
 1. **微信 / 抖音**：
    * `wx.login` / `tt.login` → 后端调用 `code2session` / `jscode2session` → 返回 `openid`、`session_key`、`unionid`（若授权）→ 后端签发 JWT（含平台/用户 ID、刷新 token）。
-   * `platform_identity` 表记录 `{user_id, platform, openid, unionid, session_key}`，定期刷新 `session_key` 并写入 `platform_sessions`。
+   * `platform_identities` 表记录 `{user_id, provider, external_id, union_id}`，供多端绑定与实名核验；短期凭证与 `resumeToken` 保存在 `platform_sessions`，字段含 `session_key`、`issued_at`、`expires_at` 与最近一次轮换信息。
    * 游客模式：生成临时 ID，限制联机，登录后调用 `POST /auth/migrate` 迁移数据。
 2. **Telegram WebApp**：
    * WebApp 启动时读取 `window.Telegram.WebApp.initData`，客户端调用 `POST /auth/telegram`，携带 `initData` 与 `hash`。
@@ -604,7 +676,7 @@ export interface AuthPayload {
    * 支持手机号验证码或三方 OAuth 登录，JWT 结构与小程序一致，`platform=web`。
    * `users` 表允许同一实体绑定多个平台标识（`openid`、`telegram_id`、`phone`），通过 `account_links` 记录映射与主账号策略。
 4. **会话、续期与互踢**：
-   * JWT 有效期 30 分钟，刷新 token 7 天；Telegram 端建议在 WebApp `onEvent('mainButtonClicked')` 中触发刷新。
+   * JWT 有效期 30 分钟，刷新 token 7 天；`refresh_tokens` 表仅存储 `token_hash` 与失效时间，刷新或注销时设置 `revoked_at` 并广播至 Redis 黑名单；Telegram 端建议在 WebApp `onEvent('mainButtonClicked')` 中触发刷新。
    * WebSocket 心跳统一 15s，服务端检测 token 即将过期时下发 `TOKEN_EXPIRE{remainMs}`，客户端调用 `/auth/refresh`。
    * 并发登录策略按平台可配置：默认仅允许 1 活跃端出牌，其余进入观战或被踢；互踢事件通过 `KICKED{reason, platform}` 通知。
 5. **风控与审计**：
