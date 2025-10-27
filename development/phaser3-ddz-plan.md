@@ -234,48 +234,191 @@ client/
 
 ---
 
-## 9. 数据库模型（简化）
+## 9. 数据库模型（含约束与迁移策略）
 
 ```
-users(id, openid, unionid, telegram_id, platform, nickname, avatar, mmr, created_at, banned_until)
-matches(id, room_id, started_at, ended_at, mode, seed, replay_ref)
-match_players(match_id, user_id, seat, role, score_change, is_win)
-turns(id, match_id, seq, seat, action, payload_json, ts)
-leaderboard(user_id, mmr, wins, losses, streak)
-platform_sessions(id, user_id, platform, session_key, expires_at)
-login_audit(id, user_id, platform, device_id, ip, created_at, status)
+users(
+  id uuid PRIMARY KEY,
+  openid text UNIQUE NULL,
+  unionid text UNIQUE NULL,
+  telegram_id bigint UNIQUE NULL,
+  platform text NOT NULL,
+  nickname varchar(40) NOT NULL,
+  avatar text,
+  mmr int DEFAULT 1200,
+  created_at timestamptz DEFAULT now(),
+  banned_until timestamptz
+)
+
+matches(
+  id uuid PRIMARY KEY,
+  room_id varchar(32) UNIQUE NOT NULL,
+  started_at timestamptz NOT NULL,
+  ended_at timestamptz,
+  mode varchar(16) NOT NULL,
+  seed bigint NOT NULL,
+  replay_ref text
+)
+
+match_players(
+  id bigserial PRIMARY KEY,
+  match_id uuid REFERENCES matches(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  seat smallint CHECK (seat BETWEEN 0 AND 2),
+  role varchar(16) NOT NULL,
+  score_change int NOT NULL,
+  is_win boolean NOT NULL,
+  UNIQUE (match_id, seat),
+  UNIQUE (match_id, user_id)
+)
+
+turns(
+  id bigserial PRIMARY KEY,
+  match_id uuid REFERENCES matches(id) ON DELETE CASCADE,
+  seq int NOT NULL,
+  seat smallint NOT NULL,
+  action varchar(32) NOT NULL,
+  payload_json jsonb NOT NULL,
+  ts timestamptz DEFAULT now(),
+  UNIQUE (match_id, seq)
+)
+
+leaderboard(
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  mmr int NOT NULL,
+  wins int NOT NULL,
+  losses int NOT NULL,
+  streak int NOT NULL,
+  updated_at timestamptz DEFAULT now()
+)
+
+platform_sessions(
+  id bigserial PRIMARY KEY,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  platform varchar(16) NOT NULL,
+  session_key text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  UNIQUE (user_id, platform)
+)
+
+login_audit(
+  id bigserial PRIMARY KEY,
+  user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  platform varchar(16) NOT NULL,
+  device_id text,
+  ip inet,
+  created_at timestamptz DEFAULT now(),
+  status varchar(16) NOT NULL,
+  extra jsonb
+)
+
+reports(
+  id bigserial PRIMARY KEY,
+  reporter_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  target_user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  match_id uuid REFERENCES matches(id),
+  reason varchar(32) NOT NULL,
+  description text,
+  evidence jsonb,
+  status varchar(16) DEFAULT 'pending',
+  handled_by uuid,
+  handled_at timestamptz
+)
+
+account_links(
+  id bigserial PRIMARY KEY,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  provider varchar(16) NOT NULL,
+  external_id text NOT NULL,
+  UNIQUE (provider, external_id)
+)
 ```
 
-* 回放存储：`turns` 或压缩事件流写对象存储（按 `replay_ref`）
+* 索引策略：
+  * `matches(mode, started_at DESC)`、`turns(match_id, seq)`、`match_players(user_id, created_at)`（物化视图或按需触发器）提升排行榜、战绩查询效率。
+  * `users(platform, created_at)`、`login_audit(user_id, created_at DESC)` 支撑风控分析。
+  * `reports(status, created_at)` 与 `reports(match_id)` 便于客服检索。
+* 约束策略：所有外键均启用 `ON DELETE` 级联或置空，避免孤儿记录；`match_players.role` 与 `reports.reason` 采用 ENUM 或 CHECK 约束限制取值。
+* 回放存储：`turns` 表保留结构化事件，同时在对象存储按 `replay_ref` 落库压缩事件流，结合 `match_id` 建立 CDN 缓存。
+* 数据归档：超过 90 天的 `matches`/`turns` 归档到冷存储表（`matches_archive`），通过分区表实现；活跃排行榜数据在 `leaderboard` 表内滚动更新。
+* 迁移策略：使用 Prisma Migrate 或 Knex 维护版本化迁移，PR 内要求附带迁移脚本；建立 `schema_migrations` 表记录版本，CI 中运行 `pnpm db:migrate --env test` 验证；提供 `pnpm db:rollback` 允许快速回滚。
+
+### 9.1 数据一致性与锁策略
+
+* 房间结算流程采用事务包裹（更新 `matches`、`match_players`、`leaderboard`），并通过 `SELECT ... FOR UPDATE` 锁定对应 `leaderboard` 行，防止并发写入。
+* 断线重连 token 写入 Redis，同时将关键状态（局数、MMR、连胜）落库，确保重放与排行榜同步。
+* 对 `account_links` 设置唯一约束避免重复绑定，变更时触发审计日志写入 `login_audit`。
+
+### 9.2 测试数据与种子脚本
+
+* `pnpm db:seed`：初始化基础账号（内测账号、Bot 账号、AI 账号）、示例牌局与排行榜条目。
+* 提供 `seed/fixtures/*.json`，包含示例回放、举报案例、平台会话记录，便于本地调试。
+* 在 CI 中使用 `docker compose -f docker-compose.test.yml up -d` 启动 PostgreSQL/Redis，运行迁移 + 种子，确保回归场景可复现。
 
 ---
 
-## 10. API/事件（摘要）
+## 10. API/事件契约（详表）
 
-### REST
+### 10.1 REST 接口定义
 
-* `POST /auth/login` → `{token}`
-* `POST /auth/telegram` → `{token, refreshToken}`
-* `POST /auth/refresh` → `{token}`
-* `POST /auth/logout`
-* `GET /profile` → 用户资料/资产
-* `GET /leaderboard?page=1`
-* `GET /replay/{matchId}`
+| 路由 | 方法 | 请求体 | 响应体 | 说明 |
+| --- | --- | --- | --- | --- |
+| `/auth/login` | POST | `{ platform: 'wechat' \| 'tiktok' \| 'web', code?: string, phone?: string, otp?: string }` | `{ token: string, refreshToken: string, expiresIn: number }` | 微信/抖音通过 `code` 置换 session，H5 支持手机号 + OTP。 |
+| `/auth/telegram` | POST | `{ initData: string, hash: string }` | `{ token, refreshToken, expiresIn, telegramId, isNew }` | 校验 Telegram 签名，`isNew=true` 触发首次绑定流程。 |
+| `/auth/refresh` | POST | `{ refreshToken: string }` | `{ token, expiresIn }` | 刷新 JWT，失败返回 `401/invalid_token`。 |
+| `/auth/logout` | POST | `Authorization: Bearer <token>` | `204 No Content` | 服务端吊销 refresh token，触发设备互踢。 |
+| `/profile` | GET | Header `Authorization` | `{ user, stats, settings }` | 返回头像、昵称、MMR、货币、设置。 |
+| `/profile` | PATCH | `{ nickname?, avatar?, settings? }` | `{ user }` | 修改资料，敏感字段（昵称）走审核队列。 |
+| `/leaderboard` | GET | `?type=mmr&season=2024Q4&page=1` | `{ items: LeaderboardEntry[], nextCursor }` | 支持分页 + 赛季筛选。 |
+| `/match/history` | GET | `?cursor=` | `{ matches: MatchSummary[], nextCursor }` | 返回最近牌局摘要。 |
+| `/replay/:matchId` | GET | Header `Authorization` | `{ meta, eventsUrl }` | 提供回放元数据与事件下载地址。 |
+| `/reports` | POST | `{ targetUserId, matchId?, reason, description?, evidenceUrls? }` | `{ id, status }` | 举报提交，写入 `reports` 表并通知客服。 |
+| `/reports/:id` | PATCH | `{ status, handledBy, note? }` | `{ report }` | 客服处理入口，需角色权限。 |
+| `/store/purchases` | POST | `{ sku, platformReceipt }` | `{ orderId, status }` | 预留付费接口，小游戏/Telegram 支付合规。 |
 
-### WebSocket（JSON 行协议）
+**错误码规范**：
+* REST 返回 `error.code`（`AUTH_INVALID_SIGNATURE`、`MATCH_NOT_FOUND`、`RATE_LIMITED` 等）与 `message`。客户端据此提示，并在 `429` 附带 `retryAfter`。
+* 所有接口要求携带 `x-platform`、`x-client-version`，版本不符返回 `426` 并提供下载地址。
 
-* `HELLO{token}` → `WELCOME{serverTs}`
-* `MATCH_JOIN{mode}` / `MATCH_CANCEL`
-* `ROOM_START{roomId, players, hand, landlordSeat, bottomCards}`
-* `TURN_BEGIN{seat, remainTime}`
-* `PLAY_ACK{ok, err?}` / `PLAY_EVT{seat, cards, type}`
-* `PASS_EVT{seat}`
-* `STATE_SNAP{hash, publicState}`（定期）
-* `GAME_END{scores, stats, mmrDelta}`
-* `RECONNECT_DENY{reason}`
-* `PING` / `PONG`
+### 10.2 WebSocket 事件
 
-**防刷**：客户端发送频控 + 服务器动作去抖（同 seq 幂等）。
+| 事件 | 方向 | 数据结构 | 描述 |
+| --- | --- | --- | --- |
+| `HELLO` | C→S | `{ token: string, platform: string, resumeToken?: string }` | 握手，支持断线重连。 |
+| `WELCOME` | S→C | `{ serverTs: number, user: MinimalProfile, room?: RoomState }` | 返回服务器时间戳与房间状态。 |
+| `MATCH_JOIN` | C→S | `{ mode: 'rank' \| 'casual', mmr: number }` | 加入匹配队列。 |
+| `MATCH_CANCEL` | C→S | `{} 或 { reason }` | 取消匹配，服务端广播 `MATCH_CANCELLED`。 |
+| `MATCH_FOUND` | S→C | `{ roomId, players: PlayerSlot[], estimatedWaitMs }` | 匹配成功，准备进入房间。 |
+| `ROOM_START` | S→C | `{ roomId, landlordSeat, hand: number[], bottomCards: number[], seed: number }` | 发牌并告知地主、底牌。 |
+| `TURN_BEGIN` | S→C | `{ seq, seat, remainMs, lastPlay? }` | 开始新一轮。 |
+| `PLAY` | C→S | `{ seq, cards: number[], type: ComboType }` | 玩家出牌，需附客户端预判牌型。 |
+| `PLAY_ACK` | S→C | `{ seq, ok: boolean, errorCode?, snapshot? }` | 服务器确认或拒绝出牌，必要时返回校正快照。 |
+| `PLAY_EVT` | S→C | `{ seq, seat, cards, type, bombMultiplier }` | 广播出牌。 |
+| `PASS` | C→S | `{ seq }` | 过牌。 |
+| `PASS_EVT` | S→C | `{ seq, seat }` | 广播过牌。 |
+| `STATE_SNAP` | S→C | `{ seq, hash, publicState, playerState? }` | 定期全量同步（断线重连也使用）。 |
+| `GAME_END` | S→C | `{ roomId, results: PlayerResult[], mmrDelta, rewards }` | 对局结果。 |
+| `RESUME` | C→S | `{ roomId, lastSeq, resumeToken }` | 断线重连请求。 |
+| `RESUME_OK` | S→C | `{ roomId, events: Event[], state }` | 重放缺失事件并提供最新状态。 |
+| `KICKED` | S→C | `{ reason, platform }` | 多端互踢或违规。 |
+| `PING`/`PONG` | 双向 | `{ ts }` | 心跳。 |
+
+**事件时序约束**：
+* 所有事件带 `seq` 自增，客户端本地维护 `lastAckSeq`，出现跳号时触发 `STATE_REQ` 主动请求补帧。
+* 服务器对超时玩家在 `TURN_BEGIN.remainMs` 到期后自动发送 `AUTO_PASS_EVT` 或 `AUTO_PLAY_EVT`，并标记托管。
+* 断线重连时若 `resumeToken` 过期，返回 `RESUME_FAIL{code='TOKEN_EXPIRED'}`，客户端需重新登录。
+
+### 10.3 示例流程
+
+1. 登录：客户端拉取平台凭据 → 调用 `/auth/*` → 存储 `token` → 建立 WS 发送 `HELLO` → 收到 `WELCOME`。
+2. 匹配：`MATCH_JOIN` → 等待 `MATCH_FOUND` → 自动收到 `ROOM_START` → 进入出牌循环。
+3. 复盘：客户端请求 `/replay/:matchId` → 下载事件流 → 使用 Phaser 重播并同步服务器关键帧。
+
+### 10.4 QA 与 Mock 策略
+
+* 使用 `docs/contracts/openapi.yaml`（待建）描述 REST 接口，结合 `prism` 或 `msw` 生成 Mock 服务，前端可在离线环境验证流程。
+* WebSocket 协议以 JSON Schema（`docs/contracts/ws/*.json`）维护，CI 校验 Schema 变更并生成 TypeScript 类型。
+* 提供 Postman/Insomnia 集合与示例事件流（`docs/contracts/examples/*.json`），加速联调。
 
 ---
 
@@ -526,3 +669,161 @@ export interface AuthPayload {
 ---
 
 > 本方案面向快速落地与后续扩展。根据 v1.2 更新，已补充 Telegram 平台定位、跨平台登录会话、构建与合规策略、后端扩展容灾与实施步骤拆解，可作为开发团队启动项目的参考蓝本。
+
+---
+
+## 26. 本地开发环境与运行指南
+
+### 26.1 基础工具与依赖
+
+* **Node.js**：18 LTS（使用 `nvm` 管理版本，`nvm install 18 && nvm use 18`）。
+* **pnpm**：8.x（`npm install -g pnpm@8`）。
+* **Docker Desktop / Podman**：启动 PostgreSQL、Redis、MinIO（可选）等服务。
+* **小程序开发工具**：微信开发者工具、抖音开发者工具；需安装 CLI 以便 CI 上传体验版。
+* **Telegram Bot Token**：向 BotFather 申请，开启 WebApp 权限；本地调试使用 `https://<ngrok>/webapp`。
+* **其他工具**：`redis-cli`、`pgcli`/`psql`、`mkcert`（本地 HTTPS）、`wireshark`/`mitmproxy`（调试网络）。
+
+### 26.2 项目初始化步骤
+
+1. 克隆仓库后执行 `pnpm install` 安装依赖。
+2. 运行 `pnpm exec prisma generate` 或 `pnpm run codegen` 生成类型（根据脚手架实际命令调整）。
+3. 拷贝 `.env.example` 为 `.env.local`，补充平台凭据。
+4. 启动基础服务：`docker compose up -d db redis`（见下文样例）。
+5. 执行 `pnpm db:migrate`、`pnpm db:seed` 初始化数据库。
+6. 启动服务端：`pnpm dev:server`（Fastify + ws 房间服）。
+7. 启动目标客户端入口：
+   * `pnpm dev:wechat`：编译小程序包，导入微信开发者工具预览。
+   * `pnpm dev:tiktok`：输出抖音小游戏目录，使用开发者工具预览。
+   * `pnpm dev:telegram`：本地 HTTPS 服务器，结合 ngrok/Cloudflare Tunnel 提供公网地址。
+   * `pnpm dev:h5`：Vite 本地调试。
+
+### 26.3 外部依赖与 Docker Compose 样例
+
+```yaml
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ddz
+      POSTGRES_PASSWORD: ddz
+      POSTGRES_DB: ddz
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+  minio:
+    image: minio/minio
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniopass
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+volumes:
+  pgdata:
+```
+
+* PostgreSQL 默认账号密码 `ddz/ddz`，可在 `.env.local` 中覆盖。
+* Redis 默认无密码，本地可保持空；线上启用密码与 TLS。
+* MinIO 用于回放/资源对象存储调试，可选启动。
+
+### 26.4 环境变量清单（.env.example）
+
+| 变量 | 说明 |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL 连接串，例如 `postgres://ddz:ddz@localhost:5432/ddz`。 |
+| `REDIS_URL` | Redis 连接串，例如 `redis://localhost:6379/0`。 |
+| `JWT_SECRET` | 签发 JWT 的密钥，至少 32 字节。 |
+| `SESSION_TTL_MINUTES` | WebSocket 断线重连 Token 有效期。 |
+| `TELEGRAM_BOT_TOKEN` | BotFather 下发的 Token，用于签名校验与消息发送。 |
+| `TELEGRAM_WEBAPP_URL` | WebApp HTTPS 地址，本地调试可用 ngrok 域名。 |
+| `WECHAT_APPID` / `WECHAT_APPSECRET` | 微信小游戏凭据。 |
+| `TT_APPID` / `TT_APPSECRET` | 抖音小游戏凭据。 |
+| `MINIGAME_ASSET_CDN` | 静态资源 CDN 地址，无则留空。 |
+| `S3_ENDPOINT` / `S3_ACCESS_KEY` / `S3_SECRET_KEY` | MinIO/S3 存储凭据，用于回放文件上传。 |
+| `LOG_LEVEL` | 默认 `info`，调试时可设为 `debug`。 |
+
+### 26.5 常用脚本与流程
+
+| 命令 | 作用 |
+| --- | --- |
+| `pnpm lint` | 使用 ESLint/Stylelint 校验前后端代码。 |
+| `pnpm test` | 执行单测，需先启动 PostgreSQL/Redis。 |
+| `pnpm test:e2e` | 机器人联机回归测试。 |
+| `pnpm dev:server` | 后端服务（Fastify + ws）热重载。 |
+| `pnpm dev:wechat` / `pnpm dev:tiktok` | 小程序构建与 watch。 |
+| `pnpm dev:telegram` | Telegram WebApp 本地调试，自动注入 Bot Token。 |
+| `pnpm dev:h5` | H5 Vite 开发服务器。 |
+| `pnpm build:*` | 平台构建（`wechat`/`tiktok`/`telegram`/`h5`/`server`）。 |
+| `pnpm db:migrate` / `pnpm db:seed` / `pnpm db:rollback` | 数据库迁移与种子管理。 |
+
+### 26.6 调试技巧
+
+* **小程序**：
+  * 使用开发者工具的“性能分析”查看 FPS、Draw Call；开启“真机调试”验证音频/弱网表现。
+  * 通过 `wx.setEnableDebug` 捕获运行时警告，常见问题（音频未解锁、包体过大）写入文档 FAQ。
+* **Telegram WebApp**：
+  * 使用桌面端/移动端调试控制台，监听 `themeChanged`、`viewportChanged` 日志；可在浏览器中模拟 `tg.initData`。
+  * 建议使用 `ngrok http 5173 --host-header rewrite` 暴露本地，Bot 设置 `WEB_APP` 按钮直达。
+* **服务端**：
+  * Fastify `pino` 日志默认输出到 `logs/`，通过 `pnpm dev:server --inspect` 启用 Node Inspector。
+  * 使用 `redis-cli monitor`、`pg_stat_activity` 排查性能瓶颈。
+* **网络抓包**：
+  * WebSocket 可用 `wscat`/`Chrome DevTools` 观察消息，必要时在服务端启用 `TRACE` 级别日志。
+  * 模拟弱网使用 `tc qdisc` 或 Chrome 网络节流，验证断线重连逻辑。
+
+### 26.7 常见问题与排障
+
+| 问题 | 现象 | 解决方案 |
+| --- | --- | --- |
+| `pnpm install` 报错 `node-gyp` | 缺少构建工具 | 在 macOS 安装 Xcode CLI，在 Linux 安装 `build-essential`。 |
+| WebSocket 握手失败 | 浏览器提示 401 | 检查 `JWT_SECRET` 是否一致、`HELLO.token` 是否过期。 |
+| 小程序真机无法连接本地 | 连接超时 | 使用 ngrok/局域网 IP + HTTPS，或在路由器开启内网穿透。 |
+| Telegram WebApp 空白 | 控制台报错 `initData` | 确认 Bot 设置了 WebApp 域名，或在本地注入测试 `initData`。 |
+| 数据库迁移冲突 | `prisma migrate` 提示 Drift | 执行 `pnpm db:reset` 重置本地 DB，重新 apply 最新迁移。 |
+
+### 26.8 代码规范与提交流程
+
+* 遵循 TypeScript/ESLint + Prettier 配置，提交前执行 `pnpm lint && pnpm test`。CI 强制通过后方可合并。
+* Commit Message 使用 [Conventional Commits](https://www.conventionalcommits.org/)：`feat:`、`fix:`、`docs:`、`chore:` 等。
+* PR 模版需包含：变更摘要、测试截图/日志、影响面、回滚策略；引用相关任务编号。
+* 对涉及协议/数据库变更的 PR，必须同步更新 `docs/contracts` 与迁移脚本。
+
+---
+
+## 27. 多端调试与构建流程指南
+
+### 27.1 微信/抖音小程序
+
+1. 执行 `pnpm dev:wechat`/`pnpm dev:tiktok` 输出到 `dist/minigame` 目录。
+2. 打开对应开发者工具导入项目，启用“本地设置”>“不校验合法域名”用于本地联调。
+3. 配置请求白名单与 WebSocket 域名，使用内网穿透域名；真机调试时检查 `wx.getSystemInfo` 返回的性能指标。
+4. 构建体验版：`pnpm build:wechat` 后通过 CLI `miniprogram-ci upload` 上传；抖音使用 `tt-ide-cli upload`。
+5. 审核包要求附上隐私弹窗截图、未成年人保护说明。
+
+### 27.2 Telegram WebApp
+
+1. `pnpm dev:telegram` 启动本地 HTTPS（Vite 配合 `mkcert` 证书）。
+2. 通过 ngrok/Cloudflare Tunnel 映射公网地址，在 BotFather `setdomain`、`setmenubutton` 指向该地址。
+3. 使用 `tg-cli`/`curl` 模拟调用 `/auth/telegram`，验证签名流程；桌面端/移动端分别测试 `viewportChanged`。
+4. 构建发布：`pnpm build:telegram` → 上传至 CDN/S3 → 更新 `tgmanifest.json` 版本 → Bot 推送更新。
+
+### 27.3 H5/PWA
+
+1. `pnpm dev:h5` 启动本地 Vite，结合浏览器 DevTools 模拟多设备。
+2. `pnpm build:h5` 生成生产包，部署至 Nginx/Cloudflare Pages；配置 `service-worker.js` 以支持离线与缓存更新提示。
+3. 使用 Lighthouse/PageSpeed 评估首屏性能、PWA 指标。
+
+### 27.4 CI/CD 骨架
+
+* GitHub Actions 工作流：
+  * `lint-test.yml`：安装 pnpm、还原依赖、启动服务容器、执行 `pnpm lint`、`pnpm test`、`pnpm test:e2e`。
+  * `build-deploy.yml`：矩阵构建多平台产物，使用缓存；完成后触发部署（小游戏体验版、Telegram CDN、H5 静态站点）。
+* 环境变量通过 GitHub Secrets 管理，敏感凭据（Bot Token、AppID、S3 密钥）仅在部署作业解密。
+* 制定回滚流程：构建保留最近 5 个版本，Telegram/H5 支持一键回滚 CDN，小游戏通过“版本回退”功能恢复。
