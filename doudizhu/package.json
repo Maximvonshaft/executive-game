@@ -1,0 +1,37 @@
+{
+  "name": "doudizhu",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit",
+    "test": "vitest --run",
+    "bot": "tsx scripts/selfplay.ts"
+  },
+  "dependencies": {
+    "clsx": "^2.0.0",
+    "immer": "^10.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.1.6",
+    "@testing-library/react": "^14.1.2",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^20.11.19",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "happy-dom": "^12.10.3",
+    "jsdom": "^23.2.0",
+    "ts-pattern": "^5.0.6",
+    "tslib": "^2.6.2",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.2",
+    "vite": "^5.1.4",
+    "vitest": "^1.4.0"
+  }
+}
