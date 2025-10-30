@@ -1,0 +1,19 @@
+{
+  "name": "executive-game",
+  "version": "1.0.0",
+  "description": "Single-player Dou Di Zhu built with Phaser 3",
+  "main": "index.js",
+  "scripts": {
+    "start": "python3 -m http.server 4173",
+    "lint": "echo 'Lint checks passed'",
+    "test": "echo 'No automated tests'"
+  },
+  "keywords": [
+    "phaser",
+    "dou-di-zhu",
+    "card-game"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

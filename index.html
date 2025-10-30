@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>单机斗地主 - Phaser3</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        font-family: 'Noto Sans SC', system-ui, -apple-system, BlinkMacSystemFont,
+          'Segoe UI', sans-serif;
+        background: radial-gradient(circle at top, #1c1f26 0%, #090b10 80%);
+        color: #f5f5f5;
+      }
+
+      #game-root {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+        box-sizing: border-box;
+      }
+
+      canvas {
+        border-radius: 18px;
+        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+      }
+
+      .fallback {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+      }
+
+      .fallback a {
+        color: #f6c667;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-root">
+      <noscript class="fallback">
+        <p>需要启用 JavaScript 才能体验 Phaser 版本的单机斗地主。</p>
+      </noscript>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
